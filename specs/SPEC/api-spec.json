@@ -1,0 +1,1298 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "InfinityMix API",
+    "version": "1.0.0",
+    "description": "API for InfinityMix, an AI-powered mashup generation platform."
+  },
+  "servers": [
+    {
+      "url": "/api/v1",
+      "description": "API v1"
+    }
+  ],
+  "tags": [
+    {
+      "name": "auth",
+      "description": "User authentication and authorization"
+    },
+    {
+      "name": "users",
+      "description": "User profile management"
+    },
+    {
+      "name": "audio",
+      "description": "Audio file upload and management"
+    },
+    {
+      "name": "mashups",
+      "description": "Mashup generation and management"
+    },
+    {
+      "name": "feedback",
+      "description": "User feedback on mashups"
+    }
+  ],
+  "paths": {
+    "/auth/register": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Register a new user account",
+        "operationId": "registerUser",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              },
+              "example": {
+                "email": "user@example.com",
+                "password": "StrongPassword123!",
+                "username": "MashupMaster"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "User created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                },
+                "example": {
+                  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                  "user": {
+                    "id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+                    "email": "user@example.com",
+                    "username": "MashupMaster"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Log in to an existing user account",
+        "operationId": "loginUser",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              },
+              "example": {
+                "email": "user@example.com",
+                "password": "StrongPassword123!"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "User logged in successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                },
+                "example": {
+                  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                  "user": {
+                    "id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+                    "email": "user@example.com",
+                    "username": "MashupMaster"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/users/me": {
+      "get": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Get current user's profile information",
+        "operationId": "getCurrentUser",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current user profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                },
+                "example": {
+                  "id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+                  "email": "user@example.com",
+                  "username": "MashupMaster",
+                  "created_at": "2025-11-28T10:00:00Z",
+                  "updated_at": "2025-11-28T10:00:00Z"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Update current user's profile information",
+        "operationId": "updateCurrentUser",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserRequest"
+              },
+              "example": {
+                "username": "NewMashupDJ",
+                "email": "new_email@example.com"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "User profile updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                },
+                "example": {
+                  "id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+                  "email": "new_email@example.com",
+                  "username": "NewMashupDJ",
+                  "created_at": "2025-11-28T10:00:00Z",
+                  "updated_at": "2025-11-28T11:30:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "users"
+        ],
+        "summary": "Delete current user's account",
+        "operationId": "deleteCurrentUser",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteAccountRequest"
+              },
+              "example": {
+                "password": "StrongPassword123!"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "User account deleted successfully"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/audio/upload": {
+      "post": {
+        "tags": [
+          "audio"
+        ],
+        "summary": "Upload audio files to the temporary pool",
+        "operationId": "uploadAudioFiles",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "binary"
+                    },
+                    "maxItems": 5,
+                    "minItems": 1,
+                    "description": "Array of audio files (MP3, WAV) to upload."
+                  }
+                },
+                "required": [
+                  "files"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Files uploaded and analysis initiated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AudioFileResponse"
+                  }
+                },
+                "example": [
+                  {
+                    "id": "f1e2d3c4-b5a6-7890-1234-567890abcdef",
+                    "original_filename": "MySong1.mp3",
+                    "analysis_status": "processing",
+                    "bpm": null,
+                    "musical_key": null,
+                    "created_at": "2025-11-28T12:00:00Z"
+                  },
+                  {
+                    "id": "a9b8c7d6-e5f4-3210-9876-543210fedcba",
+                    "original_filename": "Acapella.wav",
+                    "analysis_status": "processing",
+                    "bpm": null,
+                    "musical_key": null,
+                    "created_at": "2025-11-28T12:00:01Z"
+                  }
+                ]
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "413": {
+            "description": "Payload too large (file size or count exceeded)"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/audio/pool": {
+      "get": {
+        "tags": [
+          "audio"
+        ],
+        "summary": "Get list of audio files in the current user's temporary pool",
+        "operationId": "getAudioPool",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of uploaded audio files",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AudioFileResponse"
+                  }
+                },
+                "example": [
+                  {
+                    "id": "f1e2d3c4-b5a6-7890-1234-567890abcdef",
+                    "original_filename": "MySong1.mp3",
+                    "analysis_status": "completed",
+                    "bpm": 128.00,
+                    "musical_key": "Cmaj",
+                    "created_at": "2025-11-28T12:00:00Z"
+                  },
+                  {
+                    "id": "a9b8c7d6-e5f4-3210-9876-543210fedcba",
+                    "original_filename": "Acapella.wav",
+                    "analysis_status": "processing",
+                    "bpm": null,
+                    "musical_key": null,
+                    "created_at": "2025-11-28T12:00:01Z"
+                  }
+                ]
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/audio/pool/{fileId}": {
+      "delete": {
+        "tags": [
+          "audio"
+        ],
+        "summary": "Remove an audio file from the temporary pool",
+        "operationId": "removeAudioFileFromPool",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "fileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ID of the audio file to remove."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "File removed successfully"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/mashups/generate": {
+      "post": {
+        "tags": [
+          "mashups"
+        ],
+        "summary": "Trigger AI mashup generation",
+        "operationId": "generateMashup",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MashupGenerateRequest"
+              },
+              "example": {
+                "input_file_ids": [
+                  "f1e2d3c4-b5a6-7890-1234-567890abcdef",
+                  "a9b8c7d6-e5f4-3210-9876-543210fedcba"
+                ],
+                "duration_preset": "2_minutes"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Mashup generation initiated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MashupResponse"
+                },
+                "example": {
+                  "id": "m1a2s3h4-u5p6-7890-1234-567890abcdef",
+                  "user_id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+                  "duration_seconds": 120,
+                  "status": "queued",
+                  "output_path": null,
+                  "output_format": "mp3",
+                  "generation_time_ms": null,
+                  "created_at": "2025-11-28T12:05:00Z",
+                  "updated_at": "2025-11-28T12:05:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/mashups": {
+      "get": {
+        "tags": [
+          "mashups"
+        ],
+        "summary": "Get a list of all mashups generated by the current user",
+        "operationId": "listUserMashups",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Page number for pagination",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Number of items per page",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 10
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of user's mashups",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MashupListResponse"
+                },
+                "example": {
+                  "page": 1,
+                  "limit": 10,
+                  "total": 2,
+                  "data": [
+                    {
+                      "id": "m1a2s3h4-u5p6-7890-1234-567890abcdef",
+                      "user_id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+                      "duration_seconds": 120,
+                      "status": "completed",
+                      "output_path": "https://storage.example.com/mashups/m1a2s3h4-u5p6.mp3",
+                      "output_format": "mp3",
+                      "generation_time_ms": 75000,
+                      "created_at": "2025-11-28T12:05:00Z",
+                      "updated_at": "2025-11-28T12:06:15Z"
+                    },
+                    {
+                      "id": "b2c3d4e5-f6a7-8901-2345-67890abcdef0",
+                      "user_id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+                      "duration_seconds": 60,
+                      "status": "completed",
+                      "output_path": "https://storage.example.com/mashups/b2c3d4e5-f6a7.mp3",
+                      "output_format": "mp3",
+                      "generation_time_ms": 45000,
+                      "created_at": "2025-11-28T13:00:00Z",
+                      "updated_at": "2025-11-28T13:00:45Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/mashups/{mashupId}": {
+      "get": {
+        "tags": [
+          "mashups"
+        ],
+        "summary": "Get details of a specific mashup",
+        "operationId": "getMashupDetails",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "mashupId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ID of the mashup to retrieve."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mashup details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MashupResponse"
+                },
+                "example": {
+                  "id": "m1a2s3h4-u5p6-7890-1234-567890abcdef",
+                  "user_id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+                  "duration_seconds": 120,
+                  "status": "completed",
+                  "output_path": "https://storage.example.com/mashups/m1a2s3h4-u5p6.mp3",
+                  "output_format": "mp3",
+                  "generation_time_ms": 75000,
+                  "created_at": "2025-11-28T12:05:00Z",
+                  "updated_at": "2025-11-28T12:06:15Z"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "mashups"
+        ],
+        "summary": "Delete a specific mashup",
+        "operationId": "deleteMashup",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "mashupId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ID of the mashup to delete."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Mashup deleted successfully"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/mashups/{mashupId}/download": {
+      "get": {
+        "tags": [
+          "mashups"
+        ],
+        "summary": "Download a generated mashup file",
+        "operationId": "downloadMashup",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "mashupId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ID of the mashup to download."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mashup file downloaded successfully",
+            "content": {
+              "audio/mpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Mashup not yet ready for download (still processing or failed)"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/mashups/{mashupId}/feedback": {
+      "post": {
+        "tags": [
+          "feedback"
+        ],
+        "summary": "Submit feedback for a generated mashup",
+        "operationId": "submitMashupFeedback",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "mashupId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ID of the mashup to provide feedback for."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackRequest"
+              },
+              "example": {
+                "rating": 5,
+                "comments": "Absolutely loved this mashup! The transitions were seamless."
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Feedback submitted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackResponse"
+                },
+                "example": {
+                  "id": "f3e2d1c0-b9a8-7654-3210-fedcba987654",
+                  "user_id": "a1b2c3d4-e5f6-7890-1234-567890abcdef",
+                  "mashup_id": "m1a2s3h4-u5p6-7890-1234-567890abcdef",
+                  "rating": 5,
+                  "comments": "Absolutely loved this mashup! The transitions were seamless.",
+                  "created_at": "2025-11-28T12:10:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "Feedback already submitted for this mashup by this user."
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "RegisterRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "password",
+          "username"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "User's email address."
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 64,
+            "description": "User's password (min 8 chars, max 64 chars)."
+          },
+          "username": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 50,
+            "description": "User's display name."
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "User's email address."
+          },
+          "password": {
+            "type": "string",
+            "description": "User's password."
+          }
+        }
+      },
+      "AuthResponse": {
+        "type": "object",
+        "required": [
+          "token",
+          "user"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "JWT authentication token."
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserResponse"
+          }
+        }
+      },
+      "UserResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "username",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier for the user."
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "User's email address."
+          },
+          "username": {
+            "type": "string",
+            "description": "User's display name."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp when the account was created."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp when the account was last updated."
+          }
+        }
+      },
+      "UpdateUserRequest": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 50,
+            "description": "New username for the user."
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "New email address for the user."
+          }
+        },
+        "minProperties": 1,
+        "description": "Fields to update for the user profile. At least one field is required."
+      },
+      "DeleteAccountRequest": {
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "Current password for account deletion confirmation."
+          }
+        }
+      },
+      "AudioFileResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "original_filename",
+          "analysis_status",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier for the audio file."
+          },
+          "original_filename": {
+            "type": "string",
+            "description": "Original filename of the uploaded audio."
+          },
+          "analysis_status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "processing",
+              "completed",
+              "failed"
+            ],
+            "description": "Current status of the audio analysis."
+          },
+          "bpm": {
+            "type": "number",
+            "format": "float",
+            "nullable": true,
+            "description": "Detected Beats Per Minute (available if analysis completed)."
+          },
+          "musical_key": {
+            "type": "string",
+            "nullable": true,
+            "description": "Detected musical key (e.g., 'Cmaj', 'Amin') (available if analysis completed)."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp when the file was uploaded."
+          }
+        }
+      },
+      "MashupGenerateRequest": {
+        "type": "object",
+        "required": [
+          "input_file_ids",
+          "duration_preset"
+        ],
+        "properties": {
+          "input_file_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "minItems": 2,
+            "maxItems": 5,
+            "description": "List of IDs of uploaded audio files to use for the mashup. (MVP: 2-5 files)"
+          },
+          "duration_preset": {
+            "type": "string",
+            "enum": [
+              "1_minute",
+              "2_minutes",
+              "3_minutes"
+            ],
+            "description": "Predefined duration for the generated mashup. (MVP: fixed presets)"
+          }
+        }
+      },
+      "MashupResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "duration_seconds",
+          "status",
+          "output_format",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier for the mashup."
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "ID of the user who generated the mashup."
+          },
+          "duration_seconds": {
+            "type": "integer",
+            "description": "Target duration of the mashup in seconds."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "processing",
+              "completed",
+              "failed"
+            ],
+            "description": "Current status of the mashup generation."
+          },
+          "output_path": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true,
+            "description": "URL to the generated mashup file (available if status is 'completed')."
+          },
+          "output_format": {
+            "type": "string",
+            "description": "Format of the output file (e.g., 'mp3')."
+          },
+          "generation_time_ms": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Time taken for generation in milliseconds (available if status is 'completed')."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp when the generation request was made."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp when the mashup status was last updated."
+          }
+        }
+      },
+      "MashupListResponse": {
+        "type": "object",
+        "required": [
+          "page",
+          "limit",
+          "total",
+          "data"
+        ],
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "Current page number."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of items per page."
+          },
+          "total": {
+            "type": "integer",
+            "description": "Total number of mashups available."
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MashupResponse"
+            }
+          }
+        }
+      },
+      "FeedbackRequest": {
+        "type": "object",
+        "required": [
+          "rating"
+        ],
+        "properties": {
+          "rating": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "description": "User's satisfaction rating (1-5 stars)."
+          },
+          "comments": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 500,
+            "description": "Optional text comments from the user."
+          }
+        }
+      },
+      "FeedbackResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "mashup_id",
+          "rating",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier for the feedback entry."
+          },
+          "user_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "ID of the user who provided the feedback."
+          },
+          "mashup_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "ID of the mashup being rated."
+          },
+          "rating": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5,
+            "description": "User's satisfaction rating (1-5 stars)."
+          },
+          "comments": {
+            "type": "string",
+            "nullable": true,
+            "description": "Optional text comments from the user."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp when the feedback was submitted."
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "A human-readable error message."
+          },
+          "code": {
+            "type": "string",
+            "description": "An optional, application-specific error code."
+          }
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid input provided (e.g., missing fields, invalid format).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "message": "Invalid email format."
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Authentication required or invalid credentials.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "message": "Invalid email or password."
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "User does not have permission to access this resource.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "message": "You do not have permission to delete this mashup."
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "The requested resource was not found.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "message": "Mashup with ID 'xyz' not found."
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "Resource already exists (e.g., email already registered).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "message": "Email 'user@example.com' is already registered."
+            }
+          }
+        }
+      },
+      "InternalServerError": {
+        "description": "An unexpected server error occurred.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "message": "An internal server error occurred. Please try again later."
+            }
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "JWT Authorization header using the Bearer scheme."
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ]
+}

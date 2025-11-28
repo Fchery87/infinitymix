@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: infinitymix
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./app/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  app:
+    build: 
+      context: ./app
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/infinitymix
+      REDIS_URL: redis://redis:6379
+      NEXTAUTH_SECRET: dev-secret-key-32-chars-long
+      BETTER_AUTH_SECRET: dev-secret-key-32-chars-long
+      NEXTAUTH_URL: http://localhost:3000
+      BETTER_AUTH_URL: http://localhost:3000
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: us-east-1
+      AWS_BUCKET_NAME: infinitymix-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./app:/app
+      - /app/node_modules
+      - /app/.next
+    command: npm run dev
+
+  worker:
+    build:
+      context: ./services/worker
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/infinitymix
+      REDIS_URL: redis://redis:6379
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: us-east-1
+      S3_BUCKET: infinitymix-dev
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/worker:/app/services/worker
+      - /app/services/worker/node_modules
+    command: npm run dev
+
+  audio-analyzer:
+    build:
+      context: ./services/analyzer
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: development
+      REDIS_URL: redis://redis:6379
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: us-east-1
+      S3_BUCKET: infinitymix-dev
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/analyzer:/app/services/analyzer
+      - /app/services/analyzer/node_modules
+    command: npm run dev
+
+  audio-renderer:
+    build:
+      context: ./services/renderer
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: development
+      REDIS_URL: redis://redis:6379
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_REGION: us-east-1
+      S3_BUCKET: infinitymix-dev
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/renderer:/app/services/renderer
+      - /app/services/renderer/node_modules
+    command: npm run dev
+
+volumes:
+  postgres_data:

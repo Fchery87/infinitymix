@@ -1,0 +1,32 @@
+{
+  "name": "infinitymix-analyzer",
+  "version": "1.0.0",
+  "description": "Audio analysis service for InfinityMix",
+  "main": "dist/analyzer.js",
+  "scripts": {
+    "dev": "tsx watch src/analyzer.ts",
+    "build": "tsc",
+    "start": "node dist/analyzer.js",
+    "test": "jest",
+    "lint": "eslint src/**/*.ts"
+  },
+  "dependencies": {
+    "bullmq": "^4.12.2",
+    "ioredis": "^5.3.2",
+    "aws-sdk": "^2.1508.0",
+    "node-ffmpeg": "^0.6.2",
+    "music-tempo": "^1.2.1",
+    "key": "^1.0.1",
+    "winston": "^3.11.0",
+    "@prisma/client": "^5.7.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.9.2",
+    "@typescript-eslint/eslint-plugin": "^6.12.0",
+    "@typescript-eslint/parser": "^6.12.0",
+    "eslint": "^8.54.0",
+    "jest": "^29.7.0",
+    "tsx": "^4.6.0",
+    "typescript": "^5.2.2"
+  }
+}

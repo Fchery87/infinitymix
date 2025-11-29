@@ -40,10 +40,10 @@ export default function LandingPage() {
               <Link href="#pricing" className="text-sm font-medium text-gray-400 hover:text-white transition-colors">Pricing</Link>
             </nav>
             <div className="flex items-center space-x-4">
-              <Link href="/create">
+              <Link href="/login">
                 <Button variant="ghost" className="text-gray-300 hover:text-white">Sign In</Button>
               </Link>
-              <Link href="/create">
+              <Link href="/register">
                 <Button variant="glow" className="font-bold">
                   Get Started <ArrowRight className="ml-2 w-4 h-4" />
                 </Button>
@@ -97,7 +97,7 @@ export default function LandingPage() {
             transition={{ duration: 0.8, delay: 0.6 }}
             className="flex flex-col sm:flex-row items-center justify-center space-y-4 sm:space-y-0 sm:space-x-4"
           >
-            <Link href="/create">
+            <Link href="/register">
               <Button size="lg" variant="glow" className="h-14 px-8 text-lg w-full sm:w-auto">
                 Start Creating Now
               </Button>

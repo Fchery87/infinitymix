@@ -6,7 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Music, Play, Download, Trash2, Clock, AlertCircle, Zap, FileAudio } from 'lucide-react';
 import { formatDuration, getStatusColor, getStatusText } from '@/lib/utils/helpers';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AudioPlayer } from '@/components/ui/audio-player';
+import { AudioPlayer } from '@/components/audio-player';
 import Link from 'next/link';
 
 export default function MashupsPage() {
@@ -92,8 +92,12 @@ export default function MashupsPage() {
               <Link href="/create">
                 <Button variant="ghost" className="text-gray-400 hover:text-white hover:bg-white/5">Create New</Button>
               </Link>
-              <Button variant="ghost" className="text-gray-400 hover:text-white hover:bg-white/5">Profile</Button>
-              <Button variant="outline" className="border-white/10 hover:bg-white/5 hover:text-white">Sign Out</Button>
+              <Link href="/profile">
+                <Button variant="ghost" className="text-gray-400 hover:text-white hover:bg-white/5">Profile</Button>
+              </Link>
+              <Link href="/login">
+                <Button variant="outline" className="border-white/10 hover:bg-white/5 hover:text-white">Sign Out</Button>
+              </Link>
             </nav>
           </div>
         </div>

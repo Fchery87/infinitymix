@@ -168,9 +168,13 @@ export async function DELETE(request: NextRequest) {
     await db.delete(users).where(eq(users.id, session.user.id));
 
     // Sign out the user
-    const signOutResponse = await auth.api.signOut({
+    const signOutResult = await auth.api.signOut({
       headers: request.headers,
     });
+
+    const signOutResponse = signOutResult instanceof Response
+      ? signOutResult
+      : NextResponse.json(signOutResult);
 
     if (!signOutResponse.ok) {
       return signOutResponse;

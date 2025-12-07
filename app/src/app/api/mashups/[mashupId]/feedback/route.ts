@@ -8,9 +8,11 @@ import { ZodError } from 'zod';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { mashupId: string } }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any
 ) {
   try {
+    const { params } = context || {};
     const session = await auth.api.getSession({
       headers: request.headers,
     });
@@ -22,7 +24,14 @@ export async function POST(
       );
     }
 
-    const { mashupId } = params;
+    const mashupId = params?.mashupId;
+
+    if (!mashupId) {
+      return NextResponse.json(
+        { error: 'Mashup ID is required' },
+        { status: 400 }
+      );
+    }
     const body = await request.json();
     const { rating, comments } = feedbackSchema.parse(body);
 

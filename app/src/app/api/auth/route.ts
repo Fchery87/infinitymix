@@ -8,6 +8,12 @@ import { users } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
 import { ZodError } from 'zod';
 
+type AuthUserPayload = { user?: { id?: string } };
+
+function isAuthUserPayload(value: unknown): value is AuthUserPayload {
+  return typeof value === 'object' && value !== null && 'user' in value;
+}
+
 export async function POST(request: NextRequest) {
   const rateLimitResponse = authRateLimit(request);
   if (rateLimitResponse) {
@@ -77,12 +83,22 @@ async function handleRegister(body: unknown, request: NextRequest) {
     headers: request.headers,
   });
 
-  try {
-    const cloned = response.clone();
-    const payload = await cloned.json();
-    const createdUser = payload?.user;
+  let payload: unknown = null;
 
-    if (createdUser?.id) {
+  if (response instanceof Response) {
+    try {
+      payload = await response.clone().json();
+    } catch (error) {
+      console.error('Failed to parse registration response payload', error);
+    }
+  } else {
+    payload = response;
+  }
+
+  const createdUser = isAuthUserPayload(payload) ? payload.user : null;
+
+  if (createdUser?.id) {
+    try {
       await db
         .update(users)
         .set({
@@ -91,12 +107,16 @@ async function handleRegister(body: unknown, request: NextRequest) {
           updatedAt: new Date(),
         })
         .where(eq(users.id, createdUser.id));
+    } catch (error) {
+      console.error('Failed to sync user profile after registration', error);
     }
-  } catch (error) {
-    console.error('Failed to sync user profile after registration', error);
   }
 
-  return response;
+  if (response instanceof Response) {
+    return response;
+  }
+
+  return NextResponse.json(response);
 }
 
 async function handleLogin(body: unknown, request: NextRequest) {
@@ -110,5 +130,9 @@ async function handleLogin(body: unknown, request: NextRequest) {
     headers: request.headers,
   });
 
-  return response;
+  if (response instanceof Response) {
+    return response;
+  }
+
+  return NextResponse.json(response);
 }

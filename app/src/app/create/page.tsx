@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Zap } from 'lucide-react';
@@ -15,48 +15,132 @@ export default function CreatePage() {
   const [uploadedTracks, setUploadedTracks] = useState<Track[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isLoadingTracks, setIsLoadingTracks] = useState(false);
   const [durationPreset, setDurationPreset] = useState<DurationPreset>('2_minutes');
+  const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
+  const [generationMessage, setGenerationMessage] = useState<string | null>(null);
+
+  const loadTracks = useCallback(async () => {
+    try {
+      setIsLoadingTracks(true);
+      const response = await fetch('/api/audio/pool', { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error('Failed to load tracks');
+      }
+      const data: Track[] = await response.json();
+      setUploadedTracks(data);
+      setSelectedTrackIds((current) => current.filter((id) => data.some((track) => track.id === id && track.analysis_status === 'completed')));
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setIsLoadingTracks(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadTracks();
+  }, [loadTracks]);
+
+  useEffect(() => {
+    const shouldPoll = uploadedTracks.some((track) => track.analysis_status === 'pending' || track.analysis_status === 'analyzing');
+    if (!shouldPoll) return;
+
+    const interval = setInterval(() => {
+      void loadTracks();
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [uploadedTracks, loadTracks]);
 
   const handleFileUpload = (files: FileList) => {
     if (!files || files.length === 0) return;
 
     setIsUploading(true);
-    
-    // Create mock tracks for development
-    const mockTracks: Track[] = Array.from(files).map((file, index) => ({
-      id: `mock-track-${Date.now()}-${index}`,
-      original_filename: file.name,
-      analysis_status: Math.random() > 0.5 ? 'completed' : 'analyzing' as const,
-      bpm: Math.random() > 0.5 ? Math.floor(Math.random() * (140 - 80) + 80) : null,
-      musical_key: Math.random() > 0.5 ? ['C', 'D', 'E', 'F', 'G', 'A', 'B'][Math.floor(Math.random() * 7)] + ['maj', 'min'][Math.floor(Math.random() * 2)] : null,
-      created_at: new Date().toISOString(),
-    }));
 
-    setTimeout(() => {
-      setUploadedTracks(prev => [...prev, ...mockTracks]);
-      setIsUploading(false);
-    }, 2000); // Simulate upload time
+    const upload = async () => {
+      try {
+        const formData = new FormData();
+        Array.from(files).forEach((file) => formData.append('files', file));
+        const response = await fetch('/api/audio/upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const error = await response.json().catch(() => null);
+          throw new Error(error?.error || 'Upload failed');
+        }
+
+        await loadTracks();
+      } catch (error) {
+        console.error(error);
+        alert(error instanceof Error ? error.message : 'Upload failed');
+      } finally {
+        setIsUploading(false);
+      }
+    };
+
+    void upload();
   };
 
   const handleRemoveTrack = (id: string) => {
-    setUploadedTracks(prev => prev.filter(t => t.id !== id));
+    const remove = async () => {
+      try {
+        const response = await fetch(`/api/audio/pool/${id}`, {
+          method: 'DELETE',
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to delete track');
+        }
+
+        setSelectedTrackIds((current) => current.filter((trackId) => trackId !== id));
+        await loadTracks();
+      } catch (error) {
+        console.error(error);
+        alert(error instanceof Error ? error.message : 'Failed to delete track');
+      }
+    };
+
+    void remove();
   };
 
   const handleGenerateMashup = async () => {
-    const completedTracks = uploadedTracks.filter(t => t.analysis_status === 'completed');
-    if (completedTracks.length < 2) {
-      alert('Please wait for at least 2 tracks to finish analysis');
+    if (selectedTrackIds.length < 2) {
+      alert('Select at least 2 analyzed tracks');
       return;
     }
 
     setIsGenerating(true);
+    setGenerationMessage(null);
 
-    // Simulate mashup generation
-    setTimeout(() => {
+    try {
+      const response = await fetch('/api/mashups/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          inputFileIds: selectedTrackIds,
+          durationPreset,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'Failed to start mashup generation');
+      }
+
+      setGenerationMessage('Mashup request accepted and processing. You can check My Mashups for output once ready.');
+    } catch (error) {
+      console.error(error);
+      alert(error instanceof Error ? error.message : 'Failed to start mashup generation');
+    } finally {
       setIsGenerating(false);
-      alert('✅ Mashup generated successfully! Check the "My Mashups" page to see your creation.');
-    }, 3000); // Simulate 3-second generation time
+    }
   };
+
+  const completedTracks = useMemo(() => uploadedTracks.filter((t) => t.analysis_status === 'completed'), [uploadedTracks]);
 
   if (!isAuthenticated) {
     return (
@@ -125,6 +209,9 @@ export default function CreatePage() {
                 onUpload={handleFileUpload} 
                 isUploading={isUploading} 
             />
+            {isLoadingTracks && (
+              <p className="text-sm text-gray-500">Refreshing tracks...</p>
+            )}
           </motion.div>
 
           {/* Controls & Generation (Right/Bottom) */}
@@ -139,6 +226,40 @@ export default function CreatePage() {
                 value={durationPreset} 
                 onChange={setDurationPreset} 
             />
+
+            <Card className="bg-card/60 backdrop-blur-xl">
+              <CardContent className="pt-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-gray-400">Select analyzed tracks</p>
+                  <span className="text-xs text-gray-500">{completedTracks.length} ready</span>
+                </div>
+                <div className="space-y-3 max-h-48 overflow-auto pr-1">
+                  {completedTracks.length === 0 && (
+                    <p className="text-sm text-gray-500">No completed tracks yet. Upload files and wait for analysis.</p>
+                  )}
+                  {completedTracks.map((track) => (
+                    <label key={track.id} className="flex items-center justify-between p-3 rounded-lg bg-black/20 border border-white/5 hover:border-primary/30 transition-colors cursor-pointer">
+                      <div>
+                        <p className="text-sm text-white">{track.original_filename}</p>
+                        <p className="text-xs text-gray-500">{track.bpm ? `${track.bpm} BPM` : 'BPM TBD'} {track.musical_key ? `• ${track.musical_key}` : ''}</p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={selectedTrackIds.includes(track.id)}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setSelectedTrackIds((current) => {
+                            if (checked) return [...new Set([...current, track.id])];
+                            return current.filter((id) => id !== track.id);
+                          });
+                        }}
+                        className="h-5 w-5 accent-primary"
+                      />
+                    </label>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
             
             {/* Generation Action */}
             <Card className="bg-card/60 backdrop-blur-xl">
@@ -147,7 +268,7 @@ export default function CreatePage() {
                         className="w-full h-14 text-lg font-bold relative overflow-hidden group" 
                         variant="default"
                         onClick={handleGenerateMashup}
-                        disabled={isGenerating || uploadedTracks.filter(t => t.analysis_status === 'completed').length < 2}
+                        disabled={isGenerating || selectedTrackIds.length < 2}
                     >
                         <div className="absolute inset-0 bg-gradient-to-r from-primary via-orange-400 to-primary opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                         <span className="relative z-10 flex items-center justify-center">
@@ -164,10 +285,13 @@ export default function CreatePage() {
                         )}
                         </span>
                     </Button>
-                    {uploadedTracks.filter(t => t.analysis_status === 'completed').length < 2 && (
+                    {selectedTrackIds.length < 2 && (
                         <p className="text-xs text-center mt-3 text-gray-500">
                         * Requires at least 2 analyzed tracks
                         </p>
+                    )}
+                    {generationMessage && (
+                      <p className="text-xs text-center mt-3 text-green-500">{generationMessage}</p>
                     )}
                 </CardContent>
             </Card>

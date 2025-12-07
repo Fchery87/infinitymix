@@ -2,13 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth/config';
 import { db } from '@/lib/db';
 import { mashups } from '@/lib/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { mashupId: string } }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any
 ) {
   try {
+    const { params } = context || {};
     const session = await auth.api.getSession({
       headers: request.headers,
     });
@@ -20,7 +22,14 @@ export async function GET(
       );
     }
 
-    const { mashupId } = params;
+    const mashupId = params?.mashupId;
+
+    if (!mashupId) {
+      return NextResponse.json(
+        { error: 'Mashup ID is required' },
+        { status: 400 }
+      );
+    }
 
     // Get mashup details
     const [mashup] = await db
@@ -66,7 +75,7 @@ export async function GET(
     await db
       .update(mashups)
       .set({
-        downloadCount: mashups.downloadCount + 1,
+        downloadCount: sql`${mashups.downloadCount} + 1`,
         updatedAt: new Date(),
       })
       .where(eq(mashups.id, mashupId));

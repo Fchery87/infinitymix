@@ -50,4 +50,4 @@ export const authConfig = {
 export const auth = betterAuth(authConfig);
 
 export type Session = typeof auth.$Infer.Session;
-export type User = typeof auth.$Infer.User;
+export type User = schema.User;

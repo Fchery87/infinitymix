@@ -55,10 +55,17 @@ export function FileUpload({ onUpload, isUploading, accept = ".mp3,.wav", classN
           className="hidden"
           id="file-upload-component"
         />
-        <Button asChild disabled={isUploading} size="lg" variant="glow" className="px-10">
-          <label htmlFor="file-upload-component" className="cursor-pointer font-bold">
+        <Button
+          disabled={isUploading}
+          size="lg"
+          variant="glow"
+          className="px-10"
+          type="button"
+          onClick={() => document.getElementById('file-upload-component')?.click()}
+        >
+          <span className="font-bold">
             {isUploading ? 'Uploading...' : 'Select Audio Files'}
-          </label>
+          </span>
         </Button>
       </CardContent>
     </Card>

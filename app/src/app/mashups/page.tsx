@@ -9,6 +9,18 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { AudioPlayer } from '@/components/audio-player';
 import Link from 'next/link';
 
+type Mashup = {
+  id: string;
+  name: string;
+  duration_seconds: number;
+  status: 'pending' | 'queued' | 'generating' | 'completed' | 'failed';
+  output_path: string | null;
+  generation_time_ms: number | null;
+  playback_count: number;
+  download_count: number;
+  created_at: string;
+};
+
 export default function MashupsPage() {
   const [mashups, setMashups] = useState<Mashup[]>([]);
   const [loading, setLoading] = useState(true);

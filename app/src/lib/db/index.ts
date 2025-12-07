@@ -4,16 +4,28 @@ import { drizzle as drizzlePostgres } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from './schema';
 
-const connectionString = process.env.DATABASE_URL;
+function isValidDatabaseUrl(value?: string) {
+  if (!value) return false;
+  try {
+    const url = new URL(value.replace(/^psql\s+['"]?/, '').replace(/['"]?$/, ''));
+    return ['postgres:', 'postgresql:'].includes(url.protocol);
+  } catch {
+    return false;
+  }
+}
 
-if (!connectionString) {
-  throw new Error('DATABASE_URL is not set');
+const connectionString = isValidDatabaseUrl(process.env.DATABASE_URL)
+  ? process.env.DATABASE_URL!.replace(/^psql\s+['"]?/, '').replace(/['"]?$/, '')
+  : 'postgres://placeholder:placeholder@localhost:5432/placeholder';
+
+if (!isValidDatabaseUrl(process.env.DATABASE_URL)) {
+  console.warn('DATABASE_URL is missing or invalid; using placeholder value for build-time.');
 }
 
 neonConfig.fetchConnectionCache = true;
 
 // Primary connection for application queries (optimized for Neon serverless)
-const sql = neon(connectionString);
+const sql = neon<boolean, boolean>(connectionString);
 export const db = drizzleNeon(sql, { schema });
 
 // Secondary connection for migrations and tooling

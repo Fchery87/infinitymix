@@ -6,9 +6,11 @@ import { eq, and } from 'drizzle-orm';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { mashupId: string } }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any
 ) {
   try {
+    const { params } = context || {};
     const session = await auth.api.getSession({
       headers: request.headers,
     });
@@ -20,7 +22,14 @@ export async function GET(
       );
     }
 
-    const { mashupId } = params;
+    const mashupId = params?.mashupId;
+
+    if (!mashupId) {
+      return NextResponse.json(
+        { error: 'Mashup ID is required' },
+        { status: 400 }
+      );
+    }
 
     // Get mashup details including input tracks
     const [mashup] = await db
@@ -89,9 +98,11 @@ export async function GET(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { mashupId: string } }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any
 ) {
   try {
+    const { params } = context || {};
     const session = await auth.api.getSession({
       headers: request.headers,
     });
@@ -103,7 +114,14 @@ export async function DELETE(
       );
     }
 
-    const { mashupId } = params;
+    const mashupId = params?.mashupId;
+
+    if (!mashupId) {
+      return NextResponse.json(
+        { error: 'Mashup ID is required' },
+        { status: 400 }
+      );
+    }
 
     // Check if mashup exists and belongs to user
     const [mashup] = await db

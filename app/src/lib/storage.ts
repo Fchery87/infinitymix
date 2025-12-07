@@ -24,8 +24,20 @@ class MockStorageService {
   }
 }
 
+const mockStorage: StorageService = {
+  uploadFile: (buffer, filename, mimeType) => MockStorageService.uploadFile(buffer, filename, mimeType),
+  getDownloadUrl: (key) => MockStorageService.getDownloadUrl(key),
+  deleteFile: (key) => MockStorageService.deleteFile(key),
+  testConnection: () => MockStorageService.testConnection(),
+};
+
 // Dynamic import for AWS S3 service
-type StorageService = typeof MockStorageService;
+type StorageService = {
+  uploadFile: (buffer: Buffer, filename: string, mimeType: string) => Promise<string>;
+  getDownloadUrl: (key: string) => string;
+  deleteFile: (key: string) => Promise<void>;
+  testConnection: () => Promise<boolean>;
+};
 
 let Storage: StorageService;
 
@@ -35,14 +47,19 @@ async function initializeStorage(): Promise<void> {
     try {
       // Dynamically import AWS S3 service only when needed in production
       const { StorageService: S3Service } = await import('./storage-service');
-      Storage = S3Service;
+      Storage = {
+        uploadFile: (buffer, filename, mimeType) => S3Service.uploadFile(buffer, filename, mimeType),
+        getDownloadUrl: (key) => S3Service.getDownloadUrl(key),
+        deleteFile: (key) => S3Service.deleteFile(key),
+        testConnection: () => S3Service.testConnection(),
+      };
       console.log('🗄️  Using AWS S3 for production storage');
     } catch (error) {
       console.warn('⚠️  AWS SDK not available, falling back to mock storage', error);
-      Storage = MockStorageService;
+      Storage = mockStorage;
     }
   } else {
-    Storage = MockStorageService;
+    Storage = mockStorage;
     console.log('🪄 Using mock storage for development');
   }
 }

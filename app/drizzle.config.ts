@@ -7,7 +7,7 @@ if (!process.env.DATABASE_URL) {
 const config = {
   schema: './src/lib/db/schema.ts',
   out: './.drizzle',
-  driver: 'pg',
+  dialect: 'postgresql',
   dbCredentials: {
     url: process.env.DATABASE_URL,
   },

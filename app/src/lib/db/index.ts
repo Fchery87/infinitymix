@@ -19,7 +19,12 @@ const connectionString = isValidDatabaseUrl(process.env.DATABASE_URL)
   : 'postgres://placeholder:placeholder@localhost:5432/placeholder';
 
 if (!isValidDatabaseUrl(process.env.DATABASE_URL)) {
-  console.warn('DATABASE_URL is missing or invalid; using placeholder value for build-time.');
+  const message = 'DATABASE_URL is missing or invalid; provide a valid Neon/Postgres connection string.';
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(message);
+  } else {
+    console.warn(`${message} Using placeholder for local build-time only.`);
+  }
 }
 
 neonConfig.fetchConnectionCache = true;

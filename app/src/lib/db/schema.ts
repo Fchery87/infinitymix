@@ -5,9 +5,9 @@ export const uploadStatusEnum = pgEnum('upload_status', ['pending', 'uploaded', 
 export const analysisStatusEnum = pgEnum('analysis_status', ['pending', 'analyzing', 'completed', 'failed']);
 export const generationStatusEnum = pgEnum('generation_status', ['pending', 'generating', 'completed', 'failed']);
 
-// Users table
+// Users table - using text for id to support Better Auth's nanoid format
 export const users = pgTable('users', {
-  id: uuid('id').primaryKey().defaultRandom(),
+  id: text('id').primaryKey(),
   email: varchar('email', { length: 255 }).notNull().unique(),
   name: varchar('name', { length: 150 }).notNull(),
   passwordHash: varchar('password_hash', { length: 255 }),
@@ -20,10 +20,10 @@ export const users = pgTable('users', {
 
 // Auth tables
 export const accounts = pgTable('accounts', {
-  id: uuid('id').primaryKey().defaultRandom(),
+  id: text('id').primaryKey(),
   accountId: varchar('account_id', { length: 255 }).notNull(),
   providerId: varchar('provider_id', { length: 255 }).notNull(),
-  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   accessToken: text('access_token'),
   refreshToken: text('refresh_token'),
   idToken: text('id_token'),
@@ -39,20 +39,20 @@ export const accounts = pgTable('accounts', {
 }));
 
 export const sessions = pgTable('sessions', {
-  id: uuid('id').primaryKey().defaultRandom(),
+  id: text('id').primaryKey(),
   expiresAt: timestamp('expires_at').notNull(),
   token: varchar('token', { length: 255 }).notNull().unique(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
   ipAddress: varchar('ip_address', { length: 255 }),
   userAgent: text('user_agent'),
-  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
 }, (table) => ({
   userIdIdx: index('idx_sessions_user_id').on(table.userId),
 }));
 
 export const verifications = pgTable('verifications', {
-  id: uuid('id').primaryKey().defaultRandom(),
+  id: text('id').primaryKey(),
   identifier: varchar('identifier', { length: 255 }).notNull(),
   value: text('value').notNull(),
   expiresAt: timestamp('expires_at').notNull(),
@@ -65,7 +65,7 @@ export const verifications = pgTable('verifications', {
 // Uploaded tracks table
 export const uploadedTracks = pgTable('uploaded_tracks', {
   id: uuid('id').primaryKey().defaultRandom(),
-  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   originalFilename: varchar('original_filename', { length: 255 }).notNull(),
   storageUrl: varchar('storage_url', { length: 512 }).notNull(),
   fileSizeBytes: integer('file_size_bytes').notNull(),
@@ -83,7 +83,7 @@ export const uploadedTracks = pgTable('uploaded_tracks', {
 // Mashups table
 export const mashups = pgTable('mashups', {
   id: uuid('id').primaryKey().defaultRandom(),
-  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   name: varchar('name', { length: 255 }).notNull(),
   targetDurationSeconds: integer('target_duration_seconds').notNull(),
   outputStorageUrl: varchar('output_storage_url', { length: 512 }),
@@ -106,7 +106,7 @@ export const mashupInputTracks = pgTable('mashup_input_tracks', {
 // Feedback table
 export const feedback = pgTable('feedback', {
   id: uuid('id').primaryKey().defaultRandom(),
-  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   mashupId: uuid('mashup_id').notNull().references(() => mashups.id, { onDelete: 'cascade' }),
   rating: integer('rating').notNull(), // 1-5 stars
   comments: text('comments'),

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth/config';
 import { db } from '@/lib/db';
 import { mashups } from '@/lib/db/schema';
+import { getStorage } from '@/lib/storage';
 import { eq, and, sql } from 'drizzle-orm';
 
 export async function GET(
@@ -30,6 +31,9 @@ export async function GET(
         { status: 400 }
       );
     }
+
+    const { searchParams } = new URL(request.url);
+    const streamOnly = searchParams.get('stream') === 'true';
 
     // Get mashup details
     const [mashup] = await db
@@ -60,35 +64,51 @@ export async function GET(
       );
     }
 
-    // TODO: Generate and return a temporary signed URL for download
-    // For now, return the storage URL directly
-    const response = await fetch(mashup.outputStorageUrl);
-    
-    if (!response.ok) {
-      return NextResponse.json(
-        { error: 'File not available for download' },
-        { status: 500 }
-      );
+    const storage = await getStorage();
+    let fileBuffer: ArrayBuffer;
+    let mimeType = mashup.outputFormat === 'mp3' ? 'audio/mpeg' : 'audio/wav';
+
+    if (storage.getFile) {
+      const stored = await storage.getFile(mashup.outputStorageUrl);
+      if (!stored) {
+        return NextResponse.json(
+          { error: 'File not available for download' },
+          { status: 500 }
+        );
+      }
+      fileBuffer = stored.buffer;
+      mimeType = stored.mimeType || mimeType;
+    } else {
+      const response = await fetch(mashup.outputStorageUrl);
+      if (!response.ok) {
+        return NextResponse.json(
+          { error: 'File not available for download' },
+          { status: 500 }
+        );
+      }
+      fileBuffer = await response.arrayBuffer();
+      mimeType = response.headers.get('content-type') || mimeType;
     }
 
-    // Increment download count
-    await db
-      .update(mashups)
-      .set({
-        downloadCount: sql`${mashups.downloadCount} + 1`,
-        updatedAt: new Date(),
-      })
-      .where(eq(mashups.id, mashupId));
+    if (!streamOnly) {
+      await db
+        .update(mashups)
+        .set({
+          downloadCount: sql`${mashups.downloadCount} + 1`,
+          updatedAt: new Date(),
+        })
+        .where(eq(mashups.id, mashupId));
+    }
 
-    // Get file data
-    const fileBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(fileBuffer);
     const fileName = `InfinityMix_Mashup_${new Date().toISOString().replace(/[:.]/g, '-')}.${mashup.outputFormat}`;
 
-    return new NextResponse(fileBuffer, {
+    return new NextResponse(buffer, {
       headers: {
-        'Content-Type': mashup.outputFormat === 'mp3' ? 'audio/mpeg' : 'audio/wav',
-        'Content-Disposition': `attachment; filename="${fileName}"`,
-        'Content-Length': fileBuffer.byteLength.toString(),
+        'Content-Type': mimeType,
+        'Content-Disposition': streamOnly ? 'inline' : `attachment; filename="${fileName}"`,
+        'Content-Length': buffer.byteLength.toString(),
+        'Cache-Control': 'private, max-age=0',
       },
     });
   } catch (error) {

@@ -7,12 +7,17 @@ class MockStorageService {
 
   static async uploadFile(buffer: Buffer, filename: string, mimeType: string): Promise<string> {
     const key = `mock-uploads/${Date.now()}-${filename}`;
-    this.storage.set(key, { buffer, mimeType });
-    return `https://mock-storage.infinitymix.local/${key}`;
+    const url = `https://mock-storage.infinitymix.local/${key}`;
+    this.storage.set(url, { buffer, mimeType });
+    return url;
   }
 
   static getDownloadUrl(key: string): string {
     return `https://mock-storage.infinitymix.local/${key}`;
+  }
+
+  static async getFile(url: string): Promise<{ buffer: Buffer; mimeType: string } | null> {
+    return this.storage.get(url) ?? null;
   }
 
   static async deleteFile(key: string): Promise<void> {
@@ -29,6 +34,7 @@ const mockStorage: StorageService = {
   getDownloadUrl: (key) => MockStorageService.getDownloadUrl(key),
   deleteFile: (key) => MockStorageService.deleteFile(key),
   testConnection: () => MockStorageService.testConnection(),
+  getFile: (url) => MockStorageService.getFile(url),
 };
 
 // Dynamic import for AWS S3 service
@@ -37,6 +43,7 @@ type StorageService = {
   getDownloadUrl: (key: string) => string;
   deleteFile: (key: string) => Promise<void>;
   testConnection: () => Promise<boolean>;
+  getFile?: (url: string) => Promise<{ buffer: Buffer; mimeType: string } | null>;
 };
 
 let Storage: StorageService;
@@ -52,6 +59,7 @@ async function initializeStorage(): Promise<void> {
         getDownloadUrl: (key) => S3Service.getDownloadUrl(key),
         deleteFile: (key) => S3Service.deleteFile(key),
         testConnection: () => S3Service.testConnection(),
+        getFile: (url) => S3Service.getFile(url),
       };
       console.log('🗄️  Using AWS S3 for production storage');
     } catch (error) {

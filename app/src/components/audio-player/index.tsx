@@ -9,29 +9,88 @@ interface AudioPlayerProps {
   trackName: string;
   duration: number;
   isPlaying: boolean;
+  src?: string | null;
   onClose: () => void;
   onTogglePlay: () => void;
+  onEnded?: () => void;
 }
 
-export function AudioPlayer({ trackName, duration, isPlaying, onClose, onTogglePlay }: AudioPlayerProps) {
+export function AudioPlayer({ trackName, duration, isPlaying, src, onClose, onTogglePlay, onEnded }: AudioPlayerProps) {
+  const audioRef = React.useRef<HTMLAudioElement | null>(null);
   const [progress, setProgress] = React.useState(0);
-  const [volume] = React.useState(80);
+  const [currentTime, setCurrentTime] = React.useState(0);
+  const [displayDuration, setDisplayDuration] = React.useState(duration);
+  const [volume, setVolume] = React.useState(80);
 
-  // Simulate progress when playing
   React.useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isPlaying) {
-      interval = setInterval(() => {
-        setProgress((prev) => {
-          if (prev >= 100) return 0;
-          return prev + 0.5; // Simulate playback speed
-        });
-      }, 100);
-    }
-    return () => clearInterval(interval);
-  }, [isPlaying]);
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.volume = volume / 100;
+  }, [volume]);
 
-  const currentTime = (progress / 100) * duration;
+  React.useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !src) return;
+
+    const handleTimeUpdate = () => {
+      setCurrentTime(audio.currentTime);
+      const dur = audio.duration || displayDuration;
+      setProgress(dur ? (audio.currentTime / dur) * 100 : 0);
+    };
+
+    const handleLoaded = () => {
+      if (audio.duration && !Number.isNaN(audio.duration)) {
+        setDisplayDuration(audio.duration);
+      }
+    };
+
+    const handleEnded = () => {
+      setProgress(0);
+      setCurrentTime(0);
+      onEnded?.();
+    };
+
+    audio.addEventListener('timeupdate', handleTimeUpdate);
+    audio.addEventListener('loadedmetadata', handleLoaded);
+    audio.addEventListener('ended', handleEnded);
+
+    return () => {
+      audio.removeEventListener('timeupdate', handleTimeUpdate);
+      audio.removeEventListener('loadedmetadata', handleLoaded);
+      audio.removeEventListener('ended', handleEnded);
+    };
+  }, [src, onEnded, displayDuration]);
+
+  React.useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !src) return;
+    if (isPlaying) {
+      void audio.play().catch((error) => console.error('Audio play failed', error));
+    } else {
+      audio.pause();
+    }
+  }, [isPlaying, src]);
+
+  React.useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    setProgress(0);
+    setCurrentTime(0);
+    if (isPlaying && src) {
+      audio.currentTime = 0;
+      void audio.play().catch(() => undefined);
+    }
+  }, [src, isPlaying]);
+
+  const handleScrub = (event: React.MouseEvent<HTMLDivElement>) => {
+    const audio = audioRef.current;
+    if (!audio || !src) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const percent = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    audio.currentTime = percent * (audio.duration || displayDuration);
+  };
+
+  const hasSource = Boolean(src);
 
   return (
     <motion.div
@@ -68,12 +127,13 @@ export function AudioPlayer({ trackName, duration, isPlaying, onClose, onToggleP
             {/* Controls & Progress */}
             <div className="flex-1 flex flex-col items-center gap-2">
               <div className="flex items-center gap-4">
-                <button className="text-gray-400 hover:text-white transition-colors">
+                <button className="text-gray-400 hover:text-white transition-colors" disabled>
                   <SkipBack className="w-5 h-5" />
                 </button>
                 <button 
                   onClick={onTogglePlay}
                   className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform active:scale-95"
+                  disabled={!hasSource}
                 >
                   {isPlaying ? (
                     <Pause className="w-5 h-5 fill-current" />
@@ -81,14 +141,17 @@ export function AudioPlayer({ trackName, duration, isPlaying, onClose, onToggleP
                     <Play className="w-5 h-5 fill-current ml-0.5" />
                   )}
                 </button>
-                <button className="text-gray-400 hover:text-white transition-colors">
+                <button className="text-gray-400 hover:text-white transition-colors" disabled>
                   <SkipForward className="w-5 h-5" />
                 </button>
               </div>
               
               <div className="w-full flex items-center gap-3 text-xs text-gray-400 font-medium">
                 <span className="w-10 text-right">{formatDuration(currentTime)}</span>
-                <div className="flex-1 h-1.5 bg-white/10 rounded-full relative cursor-pointer group/progress overflow-hidden">
+                <div 
+                  className="flex-1 h-1.5 bg-white/10 rounded-full relative cursor-pointer group/progress overflow-hidden"
+                  onClick={handleScrub}
+                >
                   <motion.div 
                     className="absolute top-0 left-0 h-full bg-primary rounded-full"
                     style={{ width: `${progress}%` }}
@@ -97,7 +160,7 @@ export function AudioPlayer({ trackName, duration, isPlaying, onClose, onToggleP
                     <div className="w-2 h-2 bg-white rounded-full absolute top-1/2 -translate-y-1/2 -ml-1 shadow-lg" style={{ left: `${progress}%` }} />
                   </div>
                 </div>
-                <span className="w-10">{formatDuration(duration)}</span>
+                <span className="w-10">{formatDuration(displayDuration)}</span>
               </div>
             </div>
 
@@ -105,7 +168,14 @@ export function AudioPlayer({ trackName, duration, isPlaying, onClose, onToggleP
             <div className="flex items-center gap-4 w-1/4 justify-end">
                <div className="flex items-center gap-2 group/vol">
                  <Volume2 className="w-5 h-5 text-gray-400" />
-                 <div className="w-20 h-1 bg-white/10 rounded-full relative cursor-pointer">
+                 <div 
+                   className="w-20 h-1 bg-white/10 rounded-full relative cursor-pointer"
+                   onClick={(e) => {
+                     const rect = e.currentTarget.getBoundingClientRect();
+                     const percent = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+                     setVolume(Math.round(percent * 100));
+                   }}
+                 >
                    <div className="absolute top-0 left-0 h-full bg-white/50 rounded-full" style={{ width: `${volume}%` }} />
                  </div>
                </div>
@@ -136,6 +206,7 @@ export function AudioPlayer({ trackName, duration, isPlaying, onClose, onToggleP
           </div>
         </div>
       </div>
+      <audio ref={audioRef} src={src || undefined} preload="metadata" className="hidden" />
     </motion.div>
   );
 }

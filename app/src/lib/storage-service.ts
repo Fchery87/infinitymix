@@ -20,6 +20,11 @@ export class StorageService {
     throw new Error('AWS SDK not installed. Install with: npm install aws-sdk');
   }
 
+  static async getFile(_url: string): Promise<{ buffer: Buffer; mimeType: string } | null> {
+    void _url;
+    throw new Error('AWS SDK not installed. Install with: npm install aws-sdk');
+  }
+
   static async testConnection(): Promise<boolean> {
     return false;
   }

@@ -1,19 +1,23 @@
-import { drizzle } from 'drizzle-orm/postgres-js';
+import { neon, neonConfig } from '@neondatabase/serverless';
+import { drizzle as drizzleNeon } from 'drizzle-orm/neon-http';
+import { drizzle as drizzlePostgres } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from './schema';
 
-// Connection for queries
 const connectionString = process.env.DATABASE_URL;
 
 if (!connectionString) {
   throw new Error('DATABASE_URL is not set');
 }
 
-const client = postgres(connectionString, { prepare: false });
-export const db = drizzle(client, { schema });
+neonConfig.fetchConnectionCache = true;
 
-// Connection for migrations
-const migrationClient = postgres(connectionString, { max: 1 });
-export const migrationDb = drizzle(migrationClient, { schema });
+// Primary connection for application queries (optimized for Neon serverless)
+const sql = neon(connectionString);
+export const db = drizzleNeon(sql, { schema });
+
+// Secondary connection for migrations and tooling
+const migrationClient = postgres(connectionString, { max: 1, prepare: false, ssl: 'require' });
+export const migrationDb = drizzlePostgres(migrationClient, { schema });
 
 export { schema };

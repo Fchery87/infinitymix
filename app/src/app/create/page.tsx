@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Zap, Clock } from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
+import { Zap } from 'lucide-react';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { FileUpload } from '@/components/file-upload';
@@ -11,7 +11,7 @@ import { TrackList, Track } from '@/components/track-list';
 import { DurationPicker, DurationPreset } from '@/components/duration-picker';
 
 export default function CreatePage() {
-  const [isAuthenticated, setIsAuthenticated] = useState(true); // Auto-logged in for development
+  const [isAuthenticated] = useState(true); // Auto-logged in for development
   const [uploadedTracks, setUploadedTracks] = useState<Track[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);

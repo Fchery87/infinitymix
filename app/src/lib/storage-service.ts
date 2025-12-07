@@ -3,15 +3,20 @@
 
 // Stub service that will be replaced when AWS SDK is available
 export class StorageService {
-  static async uploadFile(buffer: Buffer, filename: string, mimeType: string): Promise<string> {
+  static async uploadFile(_buffer: Buffer, _filename: string, _mimeType: string): Promise<string> {
+    void _buffer;
+    void _filename;
+    void _mimeType;
     throw new Error('AWS SDK not installed. Install with: npm install aws-sdk');
   }
 
-  static getDownloadUrl(key: string): string {
+  static getDownloadUrl(_key: string): string {
+    void _key;
     throw new Error('AWS SDK not installed. Install with: npm install aws-sdk');
   }
 
-  static async deleteFile(key: string): Promise<void> {
+  static async deleteFile(_key: string): Promise<void> {
+    void _key;
     throw new Error('AWS SDK not installed. Install with: npm install aws-sdk');
   }
 

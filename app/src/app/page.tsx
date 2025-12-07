@@ -3,15 +3,9 @@
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { motion } from 'framer-motion';
-import { ArrowRight, Music, Zap, Layers, Wand2, PlayCircle, Radio, Check, Upload, Sliders, Download, Sparkles } from 'lucide-react';
+import { ArrowRight, Music, Zap, Layers, Wand2, PlayCircle, Radio, Check, Upload, Sliders, Download } from 'lucide-react';
 
 export default function LandingPage() {
-  const fadeIn = {
-    initial: { opacity: 0, y: 20 },
-    animate: { opacity: 1, y: 0 },
-    transition: { duration: 0.5 }
-  };
-
   const stagger = {
     animate: {
       transition: {
@@ -240,7 +234,7 @@ export default function LandingPage() {
           <div className="text-center mb-16">
             <h2 className="text-3xl md:text-5xl font-bold mb-4">Simple, Transparent Pricing</h2>
             <p className="text-gray-400 text-lg max-w-2xl mx-auto">
-              Start for free, upgrade when you're ready to go pro.
+              Start for free, upgrade when you&apos;re ready to go pro.
             </p>
           </div>
 

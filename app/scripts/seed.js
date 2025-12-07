@@ -1,9 +1,13 @@
 // Production database seeding script
 // Run with: npm run db:seed
-const { drizzle } = require('drizzle-orm/postgres-js');
-const postgres = require('postgres');
-const fs = require('fs');
-const path = require('path');
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // For production, these should be environment variables
 const connectionString = process.env.DATABASE_URL;
@@ -19,7 +23,7 @@ async function seedDatabase() {
   try {
     // Create database connection
     const client = postgres(connectionString);
-    const db = drizzle(client);
+    drizzle(client);
 
     console.log('✅ Database connection established');
 

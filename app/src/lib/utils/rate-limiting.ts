@@ -8,11 +8,20 @@ interface RateLimitConfig {
   skipFailedRequests?: boolean;
 }
 
+type RateLimiter = ((request: NextRequest) => NextResponse | null) & {
+  config: Required<RateLimitConfig>;
+};
+
+type Handler<TArgs extends unknown[] = unknown[]> = (
+  request: NextRequest,
+  ...args: TArgs
+) => Promise<NextResponse | null | undefined> | NextResponse | null | undefined;
+
 // Simple in-memory rate limiter for development
 // In production, you'd want to use Redis or a database
 const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
 
-export function createRateLimiter(config: RateLimitConfig) {
+export function createRateLimiter(config: RateLimitConfig): RateLimiter {
   const {
     windowMs,
     maxRequests,
@@ -21,10 +30,9 @@ export function createRateLimiter(config: RateLimitConfig) {
     skipFailedRequests = false,
   } = config;
 
-  return function rateLimit(request: NextRequest): NextResponse | null {
+  const rateLimiter: RateLimiter = function rateLimit(request: NextRequest): NextResponse | null {
     const identifier = getIdentifier(request);
     const now = Date.now();
-    const windowStart = now - windowMs;
 
     // Clean up expired entries
     for (const [key, value] of rateLimitStore.entries()) {
@@ -69,10 +77,18 @@ export function createRateLimiter(config: RateLimitConfig) {
         }
       );
     }
-
-    // Add rate limit headers to successful responses
     return null;
+  } as RateLimiter;
+
+  rateLimiter.config = {
+    windowMs,
+    maxRequests,
+    message,
+    skipSuccessfulRequests,
+    skipFailedRequests,
   };
+
+  return rateLimiter;
 }
 
 // Get identifier for rate limiting
@@ -89,9 +105,9 @@ function getIdentifier(request: NextRequest): string {
 }
 
 // Rate limiting middleware wrapper
-export function withRateLimit(rateLimiter: ReturnType<typeof createRateLimiter>) {
-  return function(handler: Function) {
-    return async (request: NextRequest, ...args: any[]) => {
+export function withRateLimit(rateLimiter: RateLimiter) {
+  return function<TArgs extends unknown[]>(handler: Handler<TArgs>) {
+    return async (request: NextRequest, ...args: TArgs) => {
       const rateLimitResponse = rateLimiter(request);
       if (rateLimitResponse) {
         return rateLimitResponse;
@@ -105,8 +121,8 @@ export function withRateLimit(rateLimiter: ReturnType<typeof createRateLimiter>)
         const entry = rateLimitStore.get(identifier);
         
         if (entry) {
-          const remaining = Math.max(0, config.maxRequests - entry.count);
-          response.headers.set('X-RateLimit-Limit', config.maxRequests.toString());
+          const remaining = Math.max(0, rateLimiter.config.maxRequests - entry.count);
+          response.headers.set('X-RateLimit-Limit', rateLimiter.config.maxRequests.toString());
           response.headers.set('X-RateLimit-Remaining', remaining.toString());
           response.headers.set('X-RateLimit-Reset', entry.resetTime.toString());
         }

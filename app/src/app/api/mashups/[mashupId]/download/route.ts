@@ -10,7 +10,7 @@ export async function GET(
 ) {
   try {
     const session = await auth.api.getSession({
-      headers: new Headers(),
+      headers: request.headers,
     });
 
     if (!session) {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth/config';
 import { db } from '@/lib/db';
-import { mashups, mashupInputTracks, uploadedTracks, users } from '@/lib/db/schema';
+import { mashups, mashupInputTracks, uploadedTracks } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
 
 export async function GET(
@@ -10,7 +10,7 @@ export async function GET(
 ) {
   try {
     const session = await auth.api.getSession({
-      headers: new Headers(),
+      headers: request.headers,
     });
 
     if (!session) {
@@ -93,7 +93,7 @@ export async function DELETE(
 ) {
   try {
     const session = await auth.api.getSession({
-      headers: new Headers(),
+      headers: request.headers,
     });
 
     if (!session) {

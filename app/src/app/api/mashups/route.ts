@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth/config';
 import { db } from '@/lib/db';
-import { mashups, uploadedTracks, mashupInputTracks } from '@/lib/db/schema';
-import { eq, and, desc, count } from 'drizzle-orm';
+import { mashups } from '@/lib/db/schema';
+import { eq, desc, count } from 'drizzle-orm';
 
 export async function GET(request: NextRequest) {
   try {
     const session = await auth.api.getSession({
-      headers: new Headers(),
+      headers: request.headers,
     });
 
     if (!session) {

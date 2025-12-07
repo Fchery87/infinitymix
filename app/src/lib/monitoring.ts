@@ -70,7 +70,7 @@ if (process.env.NODE_ENV === 'production' && SENTRY_DSN) {
 }
 
 // Export a wrapper for custom error reporting
-export const reportError = (error: Error, context?: Record<string, any>) => {
+export const reportError = (error: Error, context?: Record<string, unknown>) => {
   if (process.env.NODE_ENV === 'production' && SENTRY_DSN) {
     Sentry.withScope((scope) => {
       if (context) {
@@ -87,7 +87,7 @@ export const reportError = (error: Error, context?: Record<string, any>) => {
 };
 
 // Export performance monitoring
-export const reportPerformance = (name: string, start: number, attributes?: Record<string, any>) => {
+export const reportPerformance = (name: string, start: number, attributes?: Record<string, unknown>) => {
   if (process.env.NODE_ENV === 'production' && SENTRY_DSN) {
     const duration = Date.now() - start;
     Sentry.getGlobalScope().setTag('duration', duration);

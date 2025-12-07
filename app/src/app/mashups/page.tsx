@@ -3,8 +3,8 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Music, Play, Download, Trash2, Clock, AlertCircle, Zap, FileAudio } from 'lucide-react';
-import { formatDuration, getStatusColor, getStatusText } from '@/lib/utils/helpers';
+import { Music, Play, Download, Trash2, AlertCircle, Zap, FileAudio } from 'lucide-react';
+import { formatDuration, getStatusText } from '@/lib/utils/helpers';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AudioPlayer } from '@/components/audio-player';
 import Link from 'next/link';

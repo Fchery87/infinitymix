@@ -16,9 +16,9 @@ export class AppError extends Error {
 }
 
 export class ValidationError extends AppError {
-  public details?: any[];
+  public details?: unknown[];
 
-  constructor(message: string, details?: any[]) {
+  constructor(message: string, details?: unknown[]) {
     super(message, 400);
     this.details = details;
   }
@@ -49,12 +49,12 @@ export class ConflictError extends AppError {
 }
 
 // Error response formatter
-export function formatErrorResponse(error: any, requestId?: string) {
+export function formatErrorResponse(error: unknown, requestId?: string) {
   // Log the full error for debugging
   console.error('API Error:', {
-    message: error.message,
-    stack: error.stack,
-    statusCode: error.statusCode,
+    message: error instanceof Error ? error.message : 'Unknown error',
+    stack: error instanceof Error ? error.stack : undefined,
+    statusCode: error instanceof AppError ? error.statusCode : undefined,
     requestId,
     timestamp: new Date().toISOString(),
   });
@@ -62,10 +62,10 @@ export function formatErrorResponse(error: any, requestId?: string) {
   // Don't expose internal error details in production
   const isDevelopment = process.env.NODE_ENV === 'development';
   
-  const response: any = {
+  const response: Record<string, unknown> = {
     error: 'Internal server error',
-    message: isDevelopment ? error.message : 'Something went wrong',
-    statusCode: error.statusCode || 500,
+    message: error instanceof Error && isDevelopment ? error.message : 'Something went wrong',
+    statusCode: error instanceof AppError ? error.statusCode : 500,
   };
 
   // Add request ID for tracking
@@ -82,8 +82,13 @@ export function formatErrorResponse(error: any, requestId?: string) {
 }
 
 // Global error handler wrapper
-export function withErrorHandler(handler: Function) {
-  return async (request: Request, ...args: any[]) => {
+type Handler<TArgs extends unknown[] = unknown[]> = (
+  request: Request,
+  ...args: TArgs
+) => Promise<Response> | Response;
+
+export function withErrorHandler<TArgs extends unknown[]>(handler: Handler<TArgs>) {
+  return async (request: Request, ...args: TArgs) => {
     try {
       return await handler(request, ...args);
     } catch (error) {
@@ -91,7 +96,7 @@ export function withErrorHandler(handler: Function) {
       const errorResponse = formatErrorResponse(error, requestId);
       
       return NextResponse.json(errorResponse, {
-        status: error.statusCode || 500,
+        status: error instanceof AppError ? error.statusCode : 500,
         headers: {
           'X-Request-ID': requestId,
           'Cache-Control': 'no-store',

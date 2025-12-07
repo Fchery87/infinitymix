@@ -5,11 +5,12 @@ import { mashups, mashupInputTracks, uploadedTracks } from '@/lib/db/schema';
 import { mashupGenerateSchema } from '@/lib/utils/validation';
 import { generateMashupName } from '@/lib/utils/helpers';
 import { eq, and, inArray } from 'drizzle-orm';
+import { ZodError } from 'zod';
 
 export async function POST(request: NextRequest) {
   try {
     const session = await auth.api.getSession({
-      headers: new Headers(),
+      headers: request.headers,
     });
 
     if (!session) {
@@ -96,9 +97,9 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Generate mashup error:', error);
     
-    if (error instanceof Error && error.name === 'ZodError') {
+    if (error instanceof ZodError) {
       return NextResponse.json(
-        { error: 'Validation failed', details: (error as any).errors },
+        { error: 'Validation failed', details: error.errors },
         { status: 400 }
       );
     }
@@ -111,7 +112,9 @@ export async function POST(request: NextRequest) {
 }
 
 // Mock mashup generation process
-async function generateMashup(mashupId: string, inputTrackIds: string[], durationSeconds: number) {
+async function generateMashup(mashupId: string, _inputTrackIds: string[], _durationSeconds: number) {
+  void _inputTrackIds;
+  void _durationSeconds;
   try {
     // Update status to generating
     await db

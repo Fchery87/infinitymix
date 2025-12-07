@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, timestamp, integer, boolean, decimal, text, pgEnum } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, timestamp, integer, boolean, decimal, text, pgEnum, index, uniqueIndex } from 'drizzle-orm/pg-core';
 
 // Enums
 export const uploadStatusEnum = pgEnum('upload_status', ['pending', 'uploaded', 'failed']);
@@ -9,11 +9,58 @@ export const generationStatusEnum = pgEnum('generation_status', ['pending', 'gen
 export const users = pgTable('users', {
   id: uuid('id').primaryKey().defaultRandom(),
   email: varchar('email', { length: 255 }).notNull().unique(),
-  passwordHash: varchar('password_hash', { length: 255 }).notNull(),
+  name: varchar('name', { length: 150 }).notNull(),
+  passwordHash: varchar('password_hash', { length: 255 }),
   username: varchar('username', { length: 100 }),
+  emailVerified: boolean('email_verified').notNull().default(false),
+  image: varchar('image', { length: 512 }),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
+
+// Auth tables
+export const accounts = pgTable('accounts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  accountId: varchar('account_id', { length: 255 }).notNull(),
+  providerId: varchar('provider_id', { length: 255 }).notNull(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  accessToken: text('access_token'),
+  refreshToken: text('refresh_token'),
+  idToken: text('id_token'),
+  accessTokenExpiresAt: timestamp('access_token_expires_at'),
+  refreshTokenExpiresAt: timestamp('refresh_token_expires_at'),
+  scope: text('scope'),
+  password: varchar('password', { length: 255 }),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => ({
+  providerAccountUnique: uniqueIndex('accounts_provider_account_unique').on(table.providerId, table.accountId),
+  userIdIdx: index('idx_accounts_user_id').on(table.userId),
+}));
+
+export const sessions = pgTable('sessions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  expiresAt: timestamp('expires_at').notNull(),
+  token: varchar('token', { length: 255 }).notNull().unique(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  ipAddress: varchar('ip_address', { length: 255 }),
+  userAgent: text('user_agent'),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+}, (table) => ({
+  userIdIdx: index('idx_sessions_user_id').on(table.userId),
+}));
+
+export const verifications = pgTable('verifications', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  identifier: varchar('identifier', { length: 255 }).notNull(),
+  value: text('value').notNull(),
+  expiresAt: timestamp('expires_at').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => ({
+  identifierIdx: index('idx_verifications_identifier').on(table.identifier),
+}));
 
 // Uploaded tracks table
 export const uploadedTracks = pgTable('uploaded_tracks', {
@@ -69,6 +116,12 @@ export const feedback = pgTable('feedback', {
 // Types
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
+export type Account = typeof accounts.$inferSelect;
+export type NewAccount = typeof accounts.$inferInsert;
+export type Session = typeof sessions.$inferSelect;
+export type NewSession = typeof sessions.$inferInsert;
+export type Verification = typeof verifications.$inferSelect;
+export type NewVerification = typeof verifications.$inferInsert;
 export type UploadedTrack = typeof uploadedTracks.$inferSelect;
 export type NewUploadedTrack = typeof uploadedTracks.$inferInsert;
 export type Mashup = typeof mashups.$inferSelect;

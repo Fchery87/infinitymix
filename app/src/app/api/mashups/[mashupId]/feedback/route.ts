@@ -3,7 +3,8 @@ import { auth } from '@/lib/auth/config';
 import { db } from '@/lib/db';
 import { feedback, mashups } from '@/lib/db/schema';
 import { feedbackSchema } from '@/lib/utils/validation';
-import { eq, and, not } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
+import { ZodError } from 'zod';
 
 export async function POST(
   request: NextRequest,
@@ -11,7 +12,7 @@ export async function POST(
 ) {
   try {
     const session = await auth.api.getSession({
-      headers: new Headers(),
+      headers: request.headers,
     });
 
     if (!session) {
@@ -79,9 +80,9 @@ export async function POST(
   } catch (error) {
     console.error('Submit feedback error:', error);
     
-    if (error instanceof Error && error.name === 'ZodError') {
+    if (error instanceof ZodError) {
       return NextResponse.json(
-        { error: 'Validation failed', details: (error as any).errors },
+        { error: 'Validation failed', details: error.errors },
         { status: 400 }
       );
     }

@@ -3,12 +3,22 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { db } from '../db';
 import * as schema from '../db/schema';
 
+if (!process.env.BETTER_AUTH_SECRET) {
+  throw new Error('BETTER_AUTH_SECRET is not set');
+}
+
 export const authConfig = {
+  baseURL: process.env.BETTER_AUTH_URL || 'http://localhost:3000',
+  secret: process.env.BETTER_AUTH_SECRET,
   database: drizzleAdapter(db, {
     provider: 'pg',
     schema: {
       users: schema.users,
+      accounts: schema.accounts,
+      sessions: schema.sessions,
+      verifications: schema.verifications,
     },
+    usePlural: true,
   }),
   emailAndPassword: {
     enabled: true,

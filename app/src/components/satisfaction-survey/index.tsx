@@ -5,7 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Star, Send } from 'lucide-react';
 import { cn } from '@/lib/utils/helpers';
-import { motion } from 'framer-motion';
 
 interface SatisfactionSurveyProps {
   onSubmit: (rating: number, feedback: string) => void;

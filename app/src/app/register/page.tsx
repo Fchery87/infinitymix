@@ -6,13 +6,50 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Zap, Mail, Lock, User, ArrowRight } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { FormEvent, useState } from 'react';
 
 export default function RegisterPage() {
   const router = useRouter();
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleRegister = () => {
-    // Simulate registration
-    router.push('/create');
+  const handleRegister = async (event: FormEvent) => {
+    event.preventDefault();
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      const response = await fetch('/api/auth', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          action: 'register',
+          name,
+          email,
+          password,
+          username: name,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        setError(data?.error || 'Unable to create your account. Please try again.');
+        return;
+      }
+
+      router.push('/create');
+    } catch (err) {
+      console.error('Registration failed', err);
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -35,14 +72,27 @@ export default function RegisterPage() {
             Join InfinityMix and start creating mashups
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent>
+          <form className="space-y-4" onSubmit={handleRegister}>
+          {error && (
+            <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded p-2">
+              {error}
+            </div>
+          )}
           <div className="space-y-2">
             <label className="text-sm font-medium leading-none" htmlFor="name">
               Full Name
             </label>
             <div className="relative">
                 <User className="absolute left-3 top-3 h-4 w-4 text-gray-500" />
-                <Input id="name" placeholder="John Doe" className="pl-10 bg-black/20 border-white/10" />
+                <Input
+                  id="name"
+                  placeholder="John Doe"
+                  className="pl-10 bg-black/20 border-white/10"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  required
+                />
             </div>
           </div>
           <div className="space-y-2">
@@ -51,7 +101,15 @@ export default function RegisterPage() {
             </label>
             <div className="relative">
                 <Mail className="absolute left-3 top-3 h-4 w-4 text-gray-500" />
-                <Input id="email" placeholder="m@example.com" className="pl-10 bg-black/20 border-white/10" />
+                <Input
+                  id="email"
+                  placeholder="m@example.com"
+                  className="pl-10 bg-black/20 border-white/10"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  type="email"
+                  required
+                />
             </div>
           </div>
           <div className="space-y-2">
@@ -60,18 +118,27 @@ export default function RegisterPage() {
             </label>
             <div className="relative">
                 <Lock className="absolute left-3 top-3 h-4 w-4 text-gray-500" />
-                <Input id="password" type="password" className="pl-10 bg-black/20 border-white/10" />
+                <Input
+                  id="password"
+                  type="password"
+                  className="pl-10 bg-black/20 border-white/10"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  required
+                />
             </div>
           </div>
           <Button 
             className="w-full font-bold" 
             variant="glow" 
             size="lg"
-            onClick={handleRegister}
+            type="submit"
+            disabled={submitting}
           >
-            Create Account
+            {submitting ? 'Creating Account...' : 'Create Account'}
             <ArrowRight className="w-4 h-4 ml-2" />
           </Button>
+          </form>
         </CardContent>
         <CardFooter className="flex flex-col space-y-4">
             <div className="relative w-full">

@@ -4,12 +4,13 @@ import { updateProfileSchema } from '@/lib/utils/validation';
 import { db } from '@/lib/db';
 import { users } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
+import { ZodError } from 'zod';
 
 // GET /api/users/me - Get current user profile
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const session = await auth.api.getSession({
-      headers: new Headers(),
+      headers: request.headers,
     });
 
     if (!session) {
@@ -23,7 +24,10 @@ export async function GET() {
       .select({
         id: users.id,
         email: users.email,
+        name: users.name,
         username: users.username,
+        emailVerified: users.emailVerified,
+        image: users.image,
         createdAt: users.createdAt,
         updatedAt: users.updatedAt,
       })
@@ -52,7 +56,7 @@ export async function GET() {
 export async function PUT(request: NextRequest) {
   try {
     const session = await auth.api.getSession({
-      headers: new Headers(),
+      headers: request.headers,
     });
 
     if (!session) {
@@ -63,7 +67,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { username, email } = updateProfileSchema.parse(body);
+    const { username, email, name } = updateProfileSchema.parse(body);
 
     // Check if email is already taken by another user
     if (email && email !== session.user.email) {
@@ -85,6 +89,7 @@ export async function PUT(request: NextRequest) {
     const updatedUser = await db
       .update(users)
       .set({
+        name: name || undefined,
         username: username || undefined,
         email: email || undefined,
         updatedAt: new Date(),
@@ -93,7 +98,10 @@ export async function PUT(request: NextRequest) {
       .returning({
         id: users.id,
         email: users.email,
+        name: users.name,
         username: users.username,
+        emailVerified: users.emailVerified,
+        image: users.image,
         createdAt: users.createdAt,
         updatedAt: users.updatedAt,
       });
@@ -102,9 +110,9 @@ export async function PUT(request: NextRequest) {
   } catch (error) {
     console.error('Update user error:', error);
     
-    if (error instanceof Error && error.name === 'ZodError') {
+    if (error instanceof ZodError) {
       return NextResponse.json(
-        { error: 'Validation failed', details: (error as any).errors },
+        { error: 'Validation failed', details: error.errors },
         { status: 400 }
       );
     }
@@ -120,7 +128,7 @@ export async function PUT(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     const session = await auth.api.getSession({
-      headers: new Headers(),
+      headers: request.headers,
     });
 
     if (!session) {
@@ -147,8 +155,9 @@ export async function DELETE(request: NextRequest) {
           email: session.user.email,
           password,
         },
+        headers: request.headers,
       });
-    } catch (error) {
+    } catch {
       return NextResponse.json(
         { error: 'Invalid password' },
         { status: 401 }
@@ -159,11 +168,22 @@ export async function DELETE(request: NextRequest) {
     await db.delete(users).where(eq(users.id, session.user.id));
 
     // Sign out the user
-    await auth.api.signOut({
-      headers: new Headers(),
+    const signOutResponse = await auth.api.signOut({
+      headers: request.headers,
     });
 
-    return new NextResponse(null, { status: 204 });
+    if (!signOutResponse.ok) {
+      return signOutResponse;
+    }
+
+    const response = new NextResponse(null, { status: 204 });
+    signOutResponse.headers.forEach((value, key) => {
+      if (key.toLowerCase() === 'set-cookie') {
+        response.headers.append(key, value);
+      }
+    });
+
+    return response;
   } catch (error) {
     console.error('Delete user error:', error);
     return NextResponse.json(

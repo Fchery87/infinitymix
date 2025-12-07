@@ -1,12 +1,11 @@
 // Production health check endpoint
 // Returns system status for monitoring and load balancers
 
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { Storage } from '@/lib/storage';
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   const startTime = Date.now();
   const status = {
     status: 'healthy',
@@ -14,7 +13,7 @@ export async function GET(request: NextRequest) {
     uptime: process.uptime(),
     version: process.env.npm_package_version || '0.1.0',
     environment: process.env.NODE_ENV || 'development',
-    checks: {} as Record<string, any>,
+    checks: {} as Record<string, unknown>,
   };
 
   try {
@@ -23,7 +22,7 @@ export async function GET(request: NextRequest) {
       try {
         const connectionString = process.env.DATABASE_URL;
         const client = postgres(connectionString, { max: 1 });
-        const db = drizzle(client);
+        drizzle(client);
         
         // Simple database ping
         await client`SELECT 1`;

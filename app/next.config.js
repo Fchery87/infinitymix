@@ -65,7 +65,7 @@ const nextConfig = {
   },
   
   // Environment-specific optimizations
-  webpack: (config, { buildId, dev, isServer, defaultLoaders, webpack }) => {
+  webpack: (config, { dev }) => {
     // Production optimizations
     if (!dev) {
       config.optimization = {

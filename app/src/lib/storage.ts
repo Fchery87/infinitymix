@@ -38,7 +38,7 @@ async function initializeStorage(): Promise<void> {
       Storage = S3Service;
       console.log('🗄️  Using AWS S3 for production storage');
     } catch (error) {
-      console.warn('⚠️  AWS SDK not available, falling back to mock storage');
+      console.warn('⚠️  AWS SDK not available, falling back to mock storage', error);
       Storage = MockStorageService;
     }
   } else {

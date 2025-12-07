@@ -1,9 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Play, Pause, SkipBack, SkipForward, Volume2, X, Maximize2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { motion } from 'framer-motion';
+import { Play, Pause, SkipBack, SkipForward, Volume2, X } from 'lucide-react';
 import { formatDuration } from '@/lib/utils/helpers';
 
 interface AudioPlayerProps {
@@ -16,7 +15,7 @@ interface AudioPlayerProps {
 
 export function AudioPlayer({ trackName, duration, isPlaying, onClose, onTogglePlay }: AudioPlayerProps) {
   const [progress, setProgress] = React.useState(0);
-  const [volume, setVolume] = React.useState(80);
+  const [volume] = React.useState(80);
 
   // Simulate progress when playing
   React.useEffect(() => {

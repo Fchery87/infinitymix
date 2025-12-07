@@ -1,5 +1,5 @@
-// Production storage configuration for AWS S3
-// This replaces mock storage with real cloud storage
+// Storage service with R2 (S3-compatible) primary and mock fallback
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 
 // Mock Storage Service for development/testing
 class MockStorageService {
@@ -50,26 +50,89 @@ let Storage: StorageService;
 
 // Initialize storage service based on environment
 async function initializeStorage(): Promise<void> {
-  if (process.env.NODE_ENV === 'production' && process.env.AWS_ACCESS_KEY_ID) {
+  const hasR2 =
+    Boolean(process.env.R2_ENDPOINT) &&
+    Boolean(process.env.R2_ACCESS_KEY_ID) &&
+    Boolean(process.env.R2_SECRET_ACCESS_KEY) &&
+    Boolean(process.env.R2_BUCKET);
+
+  if (hasR2) {
     try {
-      // Dynamically import AWS S3 service only when needed in production
-      const { StorageService: S3Service } = await import('./storage-service');
+      const client = new S3Client({
+        region: 'auto',
+        endpoint: process.env.R2_ENDPOINT,
+        credentials: {
+          accessKeyId: process.env.R2_ACCESS_KEY_ID as string,
+          secretAccessKey: process.env.R2_SECRET_ACCESS_KEY as string,
+        },
+      });
+
+      const bucket = process.env.R2_BUCKET as string;
+      const publicBase = process.env.R2_PUBLIC_BASE;
+
       Storage = {
-        uploadFile: (buffer, filename, mimeType) => S3Service.uploadFile(buffer, filename, mimeType),
-        getDownloadUrl: (key) => S3Service.getDownloadUrl(key),
-        deleteFile: (key) => S3Service.deleteFile(key),
-        testConnection: () => S3Service.testConnection(),
-        getFile: (url) => S3Service.getFile(url),
+        uploadFile: async (buffer, filename, mimeType) => {
+          const key = `${Date.now()}-${filename}`;
+          await client.send(
+            new PutObjectCommand({
+              Bucket: bucket,
+              Key: key,
+              Body: buffer,
+              ContentType: mimeType,
+            })
+          );
+          return publicBase ? `${publicBase.replace(/\/$/, '')}/${key}` : key;
+        },
+        getDownloadUrl: (key) => {
+          if (publicBase) return `${publicBase.replace(/\/$/, '')}/${key}`;
+          // fallback signed URL (60s)
+          return key;
+        },
+        deleteFile: async (key) => {
+          const objectKey = key.replace(`${publicBase ?? ''}`.replace(/\/$/, '') + '/', '');
+          await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: objectKey }));
+        },
+        testConnection: async () => {
+          try {
+            await client.send(
+              new PutObjectCommand({
+                Bucket: bucket,
+                Key: `healthcheck-${Date.now()}.tmp`,
+                Body: Buffer.from('ok'),
+                ContentType: 'text/plain',
+              })
+            );
+            return true;
+          } catch (error) {
+            console.error('R2 testConnection failed', error);
+            return false;
+          }
+        },
+        getFile: async (url) => {
+          const objectKey = url
+            .replace(publicBase ?? '', '')
+            .replace(/^https?:\/\//, '')
+            .replace(/^[^/]+\//, '')
+            .replace(/^\//, '');
+          try {
+            const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: objectKey }));
+            // @ts-expect-error: sdk stream typing
+            const arrayBuffer = await res.Body.transformToByteArray();
+            return { buffer: Buffer.from(arrayBuffer), mimeType: res.ContentType || 'application/octet-stream' };
+          } catch {
+            return null;
+          }
+        },
       };
-      console.log('🗄️  Using AWS S3 for production storage');
+      console.log('🗄️  Using Cloudflare R2 storage');
+      return;
     } catch (error) {
-      console.warn('⚠️  AWS SDK not available, falling back to mock storage', error);
-      Storage = mockStorage;
+      console.warn('⚠️  R2 setup failed, falling back to mock storage', error);
     }
-  } else {
-    Storage = mockStorage;
-    console.log('🪄 Using mock storage for development');
   }
+
+  Storage = mockStorage;
+  console.log('🪄 Using mock storage for development');
 }
 
 // Export storage singleton

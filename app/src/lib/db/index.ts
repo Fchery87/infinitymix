@@ -1,4 +1,4 @@
-import { neon, neonConfig } from '@neondatabase/serverless';
+import { neon } from '@neondatabase/serverless';
 import { drizzle as drizzleNeon } from 'drizzle-orm/neon-http';
 import { drizzle as drizzlePostgres } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
@@ -26,8 +26,6 @@ if (!isValidDatabaseUrl(process.env.DATABASE_URL)) {
     console.warn(`${message} Using placeholder for local build-time only.`);
   }
 }
-
-neonConfig.fetchConnectionCache = true;
 
 // Primary connection for application queries (optimized for Neon serverless)
 const sql = neon<boolean, boolean>(connectionString);

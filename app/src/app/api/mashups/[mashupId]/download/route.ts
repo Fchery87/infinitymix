@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth/config';
 import { db } from '@/lib/db';
 import { mashups } from '@/lib/db/schema';
 import { getStorage } from '@/lib/storage';
+import { logTelemetry } from '@/lib/telemetry';
 import { eq, and, sql } from 'drizzle-orm';
 
 export async function GET(
@@ -99,6 +100,16 @@ export async function GET(
         })
         .where(eq(mashups.id, mashupId));
     }
+
+    logTelemetry({
+      name: 'mashup.download',
+      properties: {
+        mashupId,
+        userId: session.user.id,
+        streamOnly,
+        outputFormat: mashup.outputFormat,
+      },
+    });
 
     const buffer = Buffer.from(fileBuffer);
     const fileName = `InfinityMix_Mashup_${new Date().toISOString().replace(/[:.]/g, '-')}.${mashup.outputFormat}`;

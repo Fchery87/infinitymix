@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth/config';
 import { db } from '@/lib/db';
 import { mashups } from '@/lib/db/schema';
 import { and, eq, sql } from 'drizzle-orm';
+import { logTelemetry } from '@/lib/telemetry';
 
 export async function POST(
   request: NextRequest,
@@ -47,9 +48,19 @@ export async function POST(
       .where(eq(mashups.id, mashupId))
       .returning({ playbackCount: mashups.playbackCount });
 
+    logTelemetry({
+      name: 'mashup.play',
+      properties: {
+        mashupId,
+        userId: session.user.id,
+        playbackCount: updated.playbackCount,
+      },
+    });
+
     return NextResponse.json({ playback_count: updated.playbackCount });
   } catch (error) {
     console.error('Playback increment error:', error);
+    logTelemetry({ name: 'mashup.play.failed', level: 'error', properties: { error: (error as Error)?.message } });
     return NextResponse.json({ error: 'Failed to record playback' }, { status: 500 });
   }
 }

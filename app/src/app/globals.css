@@ -50,6 +50,26 @@
   }
 }
 
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Backdrop blur fallbacks for browsers without support */
+@supports not ((backdrop-filter: blur(8px)) or (-webkit-backdrop-filter: blur(8px))) {
+  .backdrop-blur-sm,
+  .backdrop-blur-md,
+  .backdrop-blur-lg,
+  .backdrop-blur-xl {
+    background-color: rgba(0, 0, 0, 0.65) !important;
+  }
+}
+
 /* Glassmorphism Utility */
 .glass {
   @apply bg-background/60 backdrop-blur-lg border-white/10 border;

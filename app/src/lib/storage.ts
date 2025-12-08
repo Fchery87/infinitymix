@@ -146,11 +146,14 @@ async function initializeStorage(): Promise<void> {
         getFile: async (url) => {
           const objectKey = extractKey(url);
           try {
+            console.log(`📥 R2 getFile: url=${url} -> key=${objectKey}`);
             const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: objectKey }));
             // @ts-expect-error: sdk stream typing
             const arrayBuffer = await res.Body.transformToByteArray();
+            console.log(`✅ R2 getFile success: ${objectKey} (${arrayBuffer.byteLength} bytes)`);
             return { buffer: Buffer.from(arrayBuffer), mimeType: res.ContentType || 'application/octet-stream' };
-          } catch {
+          } catch (error) {
+            console.error(`❌ R2 getFile failed for key=${objectKey}:`, error);
             return null;
           }
         },

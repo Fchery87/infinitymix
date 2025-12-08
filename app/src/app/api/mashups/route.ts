@@ -41,6 +41,9 @@ export async function GET(request: NextRequest) {
         generationTimeMs: mashups.generationTimeMs,
         playbackCount: mashups.playbackCount,
         downloadCount: mashups.downloadCount,
+        isPublic: mashups.isPublic,
+        publicSlug: mashups.publicSlug,
+        parentMashupId: mashups.parentMashupId,
         createdAt: mashups.createdAt,
         updatedAt: mashups.updatedAt,
       })
@@ -60,6 +63,9 @@ export async function GET(request: NextRequest) {
       generation_time_ms: mashup.generationTimeMs,
       playback_count: mashup.playbackCount,
       download_count: mashup.downloadCount,
+      is_public: mashup.isPublic,
+      public_slug: mashup.publicSlug,
+      parent_mashup_id: mashup.parentMashupId,
       created_at: mashup.createdAt,
       updated_at: mashup.updatedAt,
     }));

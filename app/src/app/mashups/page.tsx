@@ -20,7 +20,21 @@ type Mashup = {
   generation_time_ms: number | null;
   playback_count: number;
   download_count: number;
+  is_public?: boolean;
+  public_slug?: string | null;
+  parent_mashup_id?: string | null;
   created_at: string;
+};
+
+type TrendingMashup = {
+  id: string;
+  name: string;
+  publicSlug: string | null;
+  playbackCount: number;
+  downloadCount: number;
+  outputStorageUrl: string | null;
+  ownerName: string | null;
+  ownerImage: string | null;
 };
 
 export default function MashupsPage() {
@@ -33,6 +47,10 @@ export default function MashupsPage() {
   const [surveyMashupId, setSurveyMashupId] = useState<string | null>(null);
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
   const [submittedFeedback, setSubmittedFeedback] = useState<Record<string, boolean>>({});
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [forkingId, setForkingId] = useState<string | null>(null);
+  const [trending, setTrending] = useState<TrendingMashup[]>([]);
+  const [copyingId, setCopyingId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const fetchMashups = useCallback(async (skipLoader = false) => {
@@ -56,9 +74,22 @@ export default function MashupsPage() {
     }
   }, []);
 
+  const fetchTrending = useCallback(async () => {
+    try {
+      const res = await fetch('/api/mashups/trending', { cache: 'no-store' });
+      if (!res.ok) return;
+      const payload = await res.json().catch(() => ({}));
+      const items = (payload.mashups || []) as TrendingMashup[];
+      setTrending(items.slice(0, 6));
+    } catch (error) {
+      console.error(error);
+    }
+  }, []);
+
   useEffect(() => {
     void fetchMashups();
-  }, [fetchMashups]);
+    void fetchTrending();
+  }, [fetchMashups, fetchTrending]);
 
   useEffect(() => {
     const needsPolling = mashups.some((m) => m.status !== 'completed' && m.status !== 'failed');
@@ -151,6 +182,62 @@ export default function MashupsPage() {
       alert(error instanceof Error ? error.message : 'Failed to download mashup');
     } finally {
       setDownloadingId(null);
+    }
+  };
+
+  const handleTogglePublic = async (mashupId: string, nextValue: boolean) => {
+    try {
+      setTogglingId(mashupId);
+      const res = await fetch(`/api/mashups/visibility/${mashupId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isPublic: nextValue }),
+      });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.error || 'Failed to update visibility');
+      setMashups((prev) => prev.map((m) => m.id === mashupId ? {
+        ...m,
+        is_public: payload.is_public,
+        public_slug: payload.public_slug,
+      } : m));
+    } catch (error) {
+      console.error(error);
+      alert(error instanceof Error ? error.message : 'Failed to update visibility');
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
+  const handleFork = async (mashupId: string) => {
+    try {
+      setForkingId(mashupId);
+      const res = await fetch(`/api/mashups/${mashupId}/fork`, { method: 'POST' });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.error || 'Failed to fork mashup');
+      await fetchMashups(true);
+      alert('Remix created! Check your mashup list.');
+    } catch (error) {
+      console.error(error);
+      alert(error instanceof Error ? error.message : 'Failed to fork mashup');
+    } finally {
+      setForkingId(null);
+    }
+  };
+
+  const handleCopyLink = async (label: string, url?: string | null) => {
+    if (!url) {
+      alert('No shareable link available yet. Make sure the mashup is public.');
+      return;
+    }
+    try {
+      setCopyingId(label);
+      await navigator.clipboard.writeText(url);
+      alert('Link copied to clipboard');
+    } catch (error) {
+      console.error(error);
+      alert('Failed to copy link');
+    } finally {
+      setCopyingId(null);
     }
   };
 
@@ -278,6 +365,44 @@ export default function MashupsPage() {
           </Card>
         </div>
 
+        {trending.length > 0 && (
+          <Card className="bg-card/50 border-white/5 mb-8">
+            <CardContent className="p-5 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-gray-400">Trending (public)</p>
+                  <p className="text-lg text-white font-semibold">Hot right now</p>
+                </div>
+              </div>
+              <div className="grid md:grid-cols-3 gap-3">
+                {trending.map((item) => (
+                  <div key={item.id} className="rounded-lg border border-white/5 bg-black/30 p-3 flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-white font-medium truncate" title={item.name}>{item.name}</p>
+                      <span className="text-[11px] text-gray-500">{item.playbackCount} ▶︎</span>
+                    </div>
+                    <p className="text-xs text-gray-500 truncate">by {item.ownerName || 'Anonymous'}</p>
+                    <div className="flex items-center gap-2 text-xs text-gray-400">
+                      <span>{item.playbackCount} plays</span>
+                      <span className="w-1 h-1 rounded-full bg-gray-700" />
+                      <span>{item.downloadCount} saves</span>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleCopyLink(item.id, item.outputStorageUrl)}
+                      disabled={copyingId === item.id}
+                      className="justify-start text-primary hover:text-primary"
+                    >
+                      {copyingId === item.id ? 'Copying...' : 'Copy link'}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {errorMessage && (
           <Card className="bg-destructive/10 border-red-500/30 mb-6">
             <CardContent className="p-4 text-red-200 text-sm">{errorMessage}</CardContent>
@@ -338,6 +463,11 @@ export default function MashupsPage() {
                               <span className="px-2 py-0.5 rounded text-xs font-medium bg-white/5 text-gray-400 border border-white/5">
                                 {getStatusText(mashup.status)}
                               </span>
+                              {mashup.is_public && (
+                                <span className="px-2 py-0.5 rounded text-xs font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                                  Public
+                                </span>
+                              )}
                             </div>
                             <div className="flex flex-wrap items-center gap-3 text-sm text-gray-500">
                               <span>{new Date(mashup.created_at).toLocaleString()}</span>
@@ -349,6 +479,17 @@ export default function MashupsPage() {
                                 <>
                                   <span className="w-1 h-1 rounded-full bg-gray-700" />
                                   <span>{(mashup.generation_time_ms / 1000).toFixed(1)}s render</span>
+                                </>
+                              )}
+                              {mashup.is_public && mashup.public_slug && (
+                                <>
+                                  <span className="w-1 h-1 rounded-full bg-gray-700" />
+                                  <button
+                                    className="text-primary/80 hover:text-primary underline decoration-dotted"
+                                    onClick={() => handleCopyLink(mashup.id, `${window.location.origin}/api/mashups/public?slug=${mashup.public_slug}`)}
+                                  >
+                                    Copy share link
+                                  </button>
                                 </>
                               )}
                             </div>
@@ -400,6 +541,25 @@ export default function MashupsPage() {
                                     Download
                                   </>
                                 )}
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleTogglePublic(mashup.id, !mashup.is_public)}
+                                disabled={togglingId === mashup.id}
+                                className="border-white/10 hover:bg-primary/10 hover:text-primary hover:border-primary/30"
+                              >
+                                {togglingId === mashup.id ? 'Saving...' : mashup.is_public ? 'Make Private' : 'Make Public'}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleFork(mashup.id)}
+                                disabled={forkingId === mashup.id}
+                                className="text-gray-300 hover:text-primary"
+                              >
+                                <Sparkles className="w-4 h-4 mr-2" />
+                                {forkingId === mashup.id ? 'Remixing...' : 'Remix'}
                               </Button>
                               {!submittedFeedback[mashup.id] && (
                                 <Button 

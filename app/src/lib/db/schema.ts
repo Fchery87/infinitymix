@@ -6,6 +6,7 @@ export const analysisStatusEnum = pgEnum('analysis_status', ['pending', 'analyzi
 export const generationStatusEnum = pgEnum('generation_status', ['pending', 'generating', 'completed', 'failed']);
 export const stemStatusEnum = pgEnum('stem_status', ['pending', 'processing', 'completed', 'failed']);
 export const stemTypeEnum = pgEnum('stem_type', ['vocals', 'drums', 'bass', 'other']);
+export const visibilityEnum = pgEnum('visibility', ['private', 'public']);
 
 // Users table - using text for id to support Better Auth's nanoid format
 export const users = pgTable('users', {
@@ -113,9 +114,15 @@ export const mashups = pgTable('mashups', {
   downloadCount: integer('download_count').notNull().default(0),
   outputFormat: varchar('output_format', { length: 10 }).notNull().default('mp3'),
   generationTimeMs: integer('generation_time_ms'),
+  isPublic: boolean('is_public').notNull().default(false),
+  publicSlug: varchar('public_slug', { length: 64 }),
+  parentMashupId: uuid('parent_mashup_id').references(() => mashups.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
-});
+}, (table) => ({
+  publicSlugIdx: uniqueIndex('uq_mashups_public_slug').on(table.publicSlug),
+  userIdIdx: index('idx_mashups_user_id').on(table.userId),
+}));
 
 // Mashup input tracks (many-to-many relationship)
 export const mashupInputTracks = pgTable('mashup_input_tracks', {

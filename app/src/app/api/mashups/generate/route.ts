@@ -83,6 +83,7 @@ export async function POST(request: NextRequest) {
         targetDurationSeconds: durationSeconds,
         generationStatus: 'pending',
         outputFormat: 'mp3',
+        isPublic: false,
       })
       .returning();
 

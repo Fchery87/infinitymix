@@ -4,6 +4,8 @@ import { pgTable, uuid, varchar, timestamp, integer, boolean, decimal, text, pgE
 export const uploadStatusEnum = pgEnum('upload_status', ['pending', 'uploaded', 'failed']);
 export const analysisStatusEnum = pgEnum('analysis_status', ['pending', 'analyzing', 'completed', 'failed']);
 export const generationStatusEnum = pgEnum('generation_status', ['pending', 'generating', 'completed', 'failed']);
+export const stemStatusEnum = pgEnum('stem_status', ['pending', 'processing', 'completed', 'failed']);
+export const stemTypeEnum = pgEnum('stem_type', ['vocals', 'drums', 'bass', 'other']);
 
 // Users table - using text for id to support Better Auth's nanoid format
 export const users = pgTable('users', {
@@ -84,6 +86,20 @@ export const uploadedTracks = pgTable('uploaded_tracks', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
+
+// Track stems table
+export const trackStems = pgTable('track_stems', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  uploadedTrackId: uuid('uploaded_track_id').notNull().references(() => uploadedTracks.id, { onDelete: 'cascade' }),
+  stemType: stemTypeEnum('stem_type').notNull(),
+  storageUrl: varchar('storage_url', { length: 512 }),
+  status: stemStatusEnum('status').notNull().default('pending'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => ({
+  trackStemUnique: uniqueIndex('uq_track_stem_type').on(table.uploadedTrackId, table.stemType),
+  trackIdIdx: index('idx_track_stems_track_id').on(table.uploadedTrackId),
+}));
 
 // Mashups table
 export const mashups = pgTable('mashups', {

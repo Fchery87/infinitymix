@@ -9,6 +9,8 @@ export const metadata: Metadata = {
   description: "Create professional-quality mashups in seconds with AI. No DAW, no music theory required.",
 };
 
+export const dynamic = 'force-dynamic';
+
 export default function RootLayout({
   children,
 }: Readonly<{

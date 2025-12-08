@@ -11,7 +11,7 @@ import { Readable } from 'node:stream';
 import { YIN } from 'pitchfinder';
 
 const TARGET_SAMPLE_RATE = 44100;
-const ANALYSIS_VERSION = 'phase1-v1';
+const ANALYSIS_VERSION = 'phase2-v1';
 
 if (ffmpegStatic) {
   ffmpeg.setFfmpegPath(ffmpegStatic as string);
@@ -33,6 +33,10 @@ type AnalysisResult = {
   durationSeconds: number | null;
   beatGrid: number[];
   hasStems: boolean;
+  phrases: Array<{ start: number; end: number; energy: number }>;
+  structure: Array<{ label: string; start: number; end: number; confidence: number }>;
+  drops: number[];
+  waveformLite: number[];
 };
 
 function rotateProfile(profile: number[], shift: number) {
@@ -50,6 +54,59 @@ function correlate(hist: number[], profile: number[]) {
 
 function mapCamelot(noteIndex: number, mode: 'major' | 'minor') {
   return mode === 'major' ? camelotMajor[noteIndex] : camelotMinor[noteIndex];
+}
+
+function computeEnergyEnvelope(samples: Float32Array, sampleRate: number) {
+  const frameSize = 1024;
+  const hopSize = 512;
+  const energies: number[] = [];
+
+  for (let i = 0; i + frameSize < samples.length; i += hopSize) {
+    let sum = 0;
+    for (let j = 0; j < frameSize; j++) {
+      const v = samples[i + j];
+      sum += v * v;
+    }
+    energies.push(sum / frameSize);
+  }
+
+  const envelope: number[] = [];
+  for (let i = 1; i < energies.length; i++) {
+    const diff = energies[i] - energies[i - 1];
+    envelope.push(diff > 0 ? diff : 0);
+  }
+
+  const scale = sampleRate / TARGET_SAMPLE_RATE;
+  const normalizedEnvelope = envelope.map((v) => v * scale);
+
+  return { energies, envelope: normalizedEnvelope, hopSize, frameSize };
+}
+
+function smoothArray(values: number[], window = 4) {
+  if (values.length === 0) return values;
+  const result: number[] = [];
+  for (let i = 0; i < values.length; i++) {
+    let acc = 0;
+    let count = 0;
+    for (let j = Math.max(0, i - window); j <= Math.min(values.length - 1, i + window); j++) {
+      acc += values[j];
+      count += 1;
+    }
+    result.push(acc / Math.max(1, count));
+  }
+  return result;
+}
+
+function computeWaveformLite(samples: Float32Array, targetBins = 256) {
+  const binSize = Math.max(1, Math.floor(samples.length / targetBins));
+  const bins: number[] = [];
+  for (let i = 0; i < samples.length; i += binSize) {
+    const slice = samples.subarray(i, Math.min(samples.length, i + binSize));
+    let sum = 0;
+    for (let j = 0; j < slice.length; j++) sum += Math.abs(slice[j]);
+    bins.push(Number((sum / Math.max(1, slice.length)).toFixed(6)));
+  }
+  return bins;
 }
 
 async function decodeToPCM(buffer: Buffer, mimeType: string) {
@@ -83,26 +140,7 @@ async function decodeToPCM(buffer: Buffer, mimeType: string) {
   });
 }
 
-function estimateBpm(samples: Float32Array, sampleRate: number) {
-  const frameSize = 1024;
-  const hopSize = 512;
-  const energies: number[] = [];
-
-  for (let i = 0; i + frameSize < samples.length; i += hopSize) {
-    let sum = 0;
-    for (let j = 0; j < frameSize; j++) {
-      const v = samples[i + j];
-      sum += v * v;
-    }
-    energies.push(sum / frameSize);
-  }
-
-  const envelope: number[] = [];
-  for (let i = 1; i < energies.length; i++) {
-    const diff = energies[i] - energies[i - 1];
-    envelope.push(diff > 0 ? diff : 0);
-  }
-
+function estimateBpm(envelope: number[], sampleRate: number, hopSize: number) {
   if (envelope.length < 4) return { bpm: null, confidence: null, beatGrid: [] };
 
   const minBpm = 70;
@@ -149,6 +187,92 @@ function generateBeatGrid(bpm: number, durationSeconds: number) {
   return grid;
 }
 
+function detectPhrases(envelope: number[], hopSize: number, sampleRate: number) {
+  const hopDuration = hopSize / sampleRate;
+  if (envelope.length === 0) return [] as Array<{ start: number; end: number; energy: number }>;
+  const smoothed = smoothArray(envelope, 6);
+  const mean = smoothed.reduce((a, b) => a + b, 0) / smoothed.length;
+  const hi = mean * 1.15;
+  const lo = mean * 0.75;
+  const phrases: Array<{ start: number; end: number; energy: number }> = [];
+
+  let activeStart: number | null = null;
+  let accumEnergy = 0;
+  for (let i = 0; i < smoothed.length; i++) {
+    const val = smoothed[i];
+    const t = i * hopDuration;
+    if (activeStart === null && val >= hi) {
+      activeStart = t;
+      accumEnergy = val;
+    } else if (activeStart !== null) {
+      accumEnergy += val;
+      if (val <= lo || i === smoothed.length - 1) {
+        const end = t;
+        phrases.push({ start: Number(activeStart.toFixed(2)), end: Number(end.toFixed(2)), energy: Number((accumEnergy / Math.max(1, (end - activeStart))).toFixed(4)) });
+        activeStart = null;
+        accumEnergy = 0;
+      }
+    }
+  }
+
+  return phrases;
+}
+
+function detectDrops(envelope: number[], hopSize: number, sampleRate: number) {
+  const hopDuration = hopSize / sampleRate;
+  const smoothed = smoothArray(envelope, 10);
+  const mean = smoothed.reduce((a, b) => a + b, 0) / Math.max(1, smoothed.length);
+  const drops: number[] = [];
+
+  for (let i = 1; i < smoothed.length - 1; i++) {
+    const prev = smoothed[i - 1];
+    const curr = smoothed[i];
+    const next = smoothed[i + 1];
+    const rising = curr > prev * 1.1;
+    const peak = curr >= next && curr >= prev;
+    if (peak && rising && curr >= mean * 1.4) {
+      drops.push(Number((i * hopDuration).toFixed(2)));
+    }
+  }
+
+  return drops.slice(0, 3);
+}
+
+function buildStructure(phrases: Array<{ start: number; end: number; energy: number }>, drops: number[], durationSeconds: number | null) {
+  if (!durationSeconds) return [] as Array<{ label: string; start: number; end: number; confidence: number }>;
+  const structure: Array<{ label: string; start: number; end: number; confidence: number }> = [];
+  const sortedPhrases = [...phrases].sort((a, b) => a.start - b.start);
+  const labelsCycle = ['verse', 'chorus'];
+  let labelIdx = 0;
+
+  if (sortedPhrases.length === 0) {
+    structure.push({ label: 'intro', start: 0, end: Number(Math.min(durationSeconds, 15).toFixed(2)), confidence: 0.4 });
+    structure.push({ label: 'body', start: Number(Math.min(durationSeconds, 15).toFixed(2)), end: Number(durationSeconds.toFixed(2)), confidence: 0.4 });
+    return structure;
+  }
+
+  sortedPhrases.forEach((phrase, idx) => {
+    const label = idx === 0 ? 'intro' : labelsCycle[labelIdx % labelsCycle.length];
+    labelIdx += 1;
+    structure.push({ label, start: phrase.start, end: phrase.end, confidence: Math.min(1, phrase.energy * 2) });
+  });
+
+  const dropStart = drops[0];
+  if (typeof dropStart === 'number') {
+    const dropEnd = Math.min(durationSeconds, dropStart + 6);
+    structure.push({ label: 'drop', start: Number(Math.max(0, dropStart - 1).toFixed(2)), end: Number(dropEnd.toFixed(2)), confidence: 0.8 });
+  }
+
+  const lastEnd = Math.max(...structure.map(s => s.end), 0);
+  if (durationSeconds - lastEnd > 4) {
+    structure.push({ label: 'outro', start: Number(lastEnd.toFixed(2)), end: Number(durationSeconds.toFixed(2)), confidence: 0.5 });
+  }
+
+  return structure
+    .sort((a, b) => a.start - b.start)
+    .map(section => ({ ...section, start: Number(section.start.toFixed(2)), end: Number(section.end.toFixed(2)) }));
+}
+
 function estimateKey(samples: Float32Array, sampleRate: number) {
   const detector = YIN({ sampleRate });
   const frameSize = 2048;
@@ -157,7 +281,7 @@ function estimateKey(samples: Float32Array, sampleRate: number) {
 
   for (let i = 0; i + frameSize < samples.length; i += hopSize) {
     const frame = samples.slice(i, i + frameSize);
-    const freq = detector(frame as unknown as number[]);
+    const freq = detector(frame as unknown as Float32Array);
     if (freq && Number.isFinite(freq)) {
       const midi = Math.round(12 * Math.log2(freq / 440) + 69);
       const cls = ((midi % 12) + 12) % 12;
@@ -198,6 +322,8 @@ function estimateKey(samples: Float32Array, sampleRate: number) {
 
 async function analyze(buffer: Buffer, mimeType: string, fileName: string): Promise<AnalysisResult> {
   const { samples, sampleRate } = await decodeToPCM(buffer, mimeType);
+  const { envelope, hopSize } = computeEnergyEnvelope(samples, sampleRate);
+  const waveformLite = computeWaveformLite(samples);
 
   let durationSeconds: number | null = null;
   try {
@@ -207,9 +333,12 @@ async function analyze(buffer: Buffer, mimeType: string, fileName: string): Prom
     durationSeconds = samples.length > 0 ? samples.length / sampleRate : null;
   }
 
-  const { bpm, confidence: bpmConfidence } = estimateBpm(samples, sampleRate);
+  const { bpm, confidence: bpmConfidence } = estimateBpm(envelope, sampleRate, hopSize);
   const { key, camelot, confidence: keyConfidence } = estimateKey(samples, sampleRate);
   const beatGrid = bpm && durationSeconds ? generateBeatGrid(bpm, durationSeconds) : [];
+  const phrases = detectPhrases(envelope, hopSize, sampleRate);
+  const drops = detectDrops(envelope, hopSize, sampleRate);
+  const structure = buildStructure(phrases, drops, durationSeconds);
 
   log('info', 'audio.analysis.complete', {
     fileName,
@@ -218,6 +347,7 @@ async function analyze(buffer: Buffer, mimeType: string, fileName: string): Prom
     key,
     camelot,
     durationSeconds,
+    drops,
   });
 
   return {
@@ -229,6 +359,10 @@ async function analyze(buffer: Buffer, mimeType: string, fileName: string): Prom
     durationSeconds: durationSeconds ? Number(durationSeconds.toFixed(2)) : null,
     beatGrid,
     hasStems: false,
+    phrases,
+    structure,
+    drops,
+    waveformLite,
   };
 }
 
@@ -264,14 +398,19 @@ export async function startTrackAnalysis({ trackId, buffer, storageUrl, mimeType
       .update(uploadedTracks)
       .set({
         analysisStatus: 'completed',
-        bpm: result.bpm,
-        bpmConfidence: result.bpmConfidence,
+        bpm: result.bpm !== null ? result.bpm.toString() : null,
+        bpmConfidence: result.bpmConfidence !== null ? result.bpmConfidence.toString() : null,
         keySignature: result.keySignature,
         camelotKey: result.camelotKey,
-        keyConfidence: result.keyConfidence,
-        durationSeconds: result.durationSeconds,
+        keyConfidence: result.keyConfidence !== null ? result.keyConfidence.toString() : null,
+        durationSeconds: result.durationSeconds !== null ? result.durationSeconds.toString() : null,
         hasStems: result.hasStems,
         beatGrid: result.beatGrid,
+        phrases: result.phrases,
+        structure: result.structure,
+        dropMoments: result.drops,
+        waveformLite: result.waveformLite,
+        analysisQuality: 'structured',
         analysisVersion: ANALYSIS_VERSION,
         updatedAt: new Date(),
       })

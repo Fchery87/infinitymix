@@ -1,3 +1,5 @@
+const path = require('path');
+
 const r2Endpoint = process.env.R2_ENDPOINT ? new URL(process.env.R2_ENDPOINT).origin : null;
 const r2PublicBase = process.env.R2_PUBLIC_BASE ? new URL(process.env.R2_PUBLIC_BASE).origin : null;
 
@@ -33,6 +35,9 @@ const nextConfig = {
   
   // Enable trailing slash for consistency
   trailingSlash: true,
+  
+  // Externalize native packages that shouldn't be bundled
+  serverExternalPackages: ['ffmpeg-static', 'fluent-ffmpeg', 'music-metadata', 'pitchfinder'],
   
   // Image optimizations for production
   images: {
@@ -94,6 +99,16 @@ const nextConfig = {
   
   // Environment-specific optimizations
   webpack: (config, { dev }) => {
+    // Use a safe stub for next/document to avoid runtime Html import errors during prerender
+    const documentStub = path.join(__dirname, 'src/lib/next-document-stub.tsx');
+    config.resolve.alias['next/document'] = documentStub;
+    config.resolve.alias['next/dist/shared/lib/document'] = documentStub;
+
+    // Suppress fluent-ffmpeg's dynamic require warnings
+    config.ignoreWarnings = [
+      { module: /node_modules\/fluent-ffmpeg/ }
+    ];
+
     // Production optimizations
     if (!dev) {
       config.optimization = {

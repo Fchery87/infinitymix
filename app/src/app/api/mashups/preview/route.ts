@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Content-Type must be application/json' }, { status: 415 });
     }
 
-    const { trackIds, durationSeconds } = await request.json();
+    const { trackIds, durationSeconds, mixMode = 'standard' } = await request.json();
     if (!Array.isArray(trackIds) || trackIds.length < 2) {
       return NextResponse.json({ error: 'At least 2 trackIds required' }, { status: 400 });
     }
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
       tracks.push({ id: r.id, storageUrl: r.storageUrl, mimeType: fetched.mimeType || r.mimeType, bpm: r.bpm ? Number(r.bpm) : null, buffer: fetched.buffer });
     }
 
-    const buffer = await mixToBuffer(tracks, safeDuration);
+    const buffer = await mixToBuffer(tracks, safeDuration, mixMode);
     return new NextResponse(buffer, {
       status: 200,
       headers: {

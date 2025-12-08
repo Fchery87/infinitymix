@@ -2,7 +2,7 @@ import { db } from '@/lib/db';
 import { uploadedTracks } from '@/lib/db/schema';
 import { getStorage } from '@/lib/storage';
 import { ValidationError } from '@/lib/utils/error-handling';
-import { startTrackAnalysis } from './analysis-service';
+import { enqueueAnalysis } from '@/lib/queue';
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 const ALLOWED_TYPES = ['audio/mpeg', 'audio/wav', 'audio/mp3', 'audio/wave'];
@@ -17,6 +17,10 @@ export type UploadedTrackResponse = {
   bpm_confidence: number | null;
   key_confidence: number | null;
   beat_grid: number[];
+  phrases: Array<{ start: number; end: number; energy: number }>;
+  structure: Array<{ label: string; start: number; end: number; confidence: number }>;
+  drop_moments: number[];
+  waveform_lite: number[];
   analysis_version: string | null;
   duration_seconds: number | null;
   has_stems: boolean;
@@ -52,8 +56,8 @@ export async function processSingleUpload(userId: string, file: File): Promise<U
     })
     .returning();
 
-  // Fire and forget analysis
-  void startTrackAnalysis({ trackId: track.id, buffer, storageUrl, mimeType: file.type, fileName: file.name });
+  // Enqueue analysis (in-memory queue by default)
+  void enqueueAnalysis({ type: 'analysis', trackId: track.id, buffer, storageUrl, mimeType: file.type, fileName: file.name });
 
   return formatTrackResponse(track);
 }
@@ -69,6 +73,10 @@ export function formatTrackResponse(track: typeof uploadedTracks.$inferSelect): 
     bpm_confidence: track.bpmConfidence ? Number(track.bpmConfidence) : null,
     key_confidence: track.keyConfidence ? Number(track.keyConfidence) : null,
     beat_grid: track.beatGrid ?? [],
+    phrases: track.phrases ?? [],
+    structure: track.structure ?? [],
+    drop_moments: track.dropMoments ?? [],
+    waveform_lite: track.waveformLite ?? [],
     analysis_version: track.analysisVersion ?? null,
     duration_seconds: track.durationSeconds ? Number(track.durationSeconds) : null,
     has_stems: Boolean(track.hasStems),

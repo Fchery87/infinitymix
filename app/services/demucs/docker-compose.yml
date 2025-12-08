@@ -1,0 +1,26 @@
+# Docker Compose for Demucs Service
+# Use this for local development
+
+version: '3.8'
+
+services:
+  demucs:
+    build: .
+    ports:
+      - "8001:8001"
+    environment:
+      - PORT=8001
+    volumes:
+      # Mount for model cache (persists between restarts)
+      - demucs-cache:/root/.cache/torch
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # For CPU-only, remove the deploy section above
+
+volumes:
+  demucs-cache:

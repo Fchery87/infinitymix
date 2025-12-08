@@ -16,7 +16,7 @@ vi.mock('@/lib/storage', () => ({
 vi.mock('@/lib/utils/rate-limiting', () => ({
   uploadRateLimit: vi.fn(),
   generalRateLimit: vi.fn(),
-  withRateLimit: (handler: (...args: unknown[]) => unknown) => {
+  withRateLimit: () => (handler: (...args: unknown[]) => unknown) => {
     return (...args: unknown[]) => handler(...args);
   },
 }));
@@ -33,15 +33,17 @@ vi.mock('@/lib/db/schema', () => ({
   users: {},
 }));
 
-vi.mock('@/lib/audio/analysis-service', () => ({
-  startTrackAnalysis: vi.fn(),
+vi.mock('@/lib/queue', () => ({
+  enqueueAnalysis: vi.fn(),
+  enqueueMix: vi.fn(),
+  enqueueStems: vi.fn(),
 }));
 
 import { auth } from '@/lib/auth/config';
 import { getStorage } from '@/lib/storage';
 import { db } from '@/lib/db';
-import { presignHandler } from '@/app/api/audio/upload/presign/route';
-import { completeHandler } from '@/app/api/audio/upload/complete/route';
+import { POST as presignPost } from '@/app/api/audio/upload/presign/route';
+import { POST as completePost } from '@/app/api/audio/upload/complete/route';
 
 describe('upload presign/complete routes', () => {
   beforeEach(() => {
@@ -67,7 +69,7 @@ describe('upload presign/complete routes', () => {
       body: JSON.stringify({ filename: 'file.mp3', contentType: 'audio/mpeg', size: 1024 }),
     });
 
-    const res = await presignHandler(req);
+    const res = await presignPost(req);
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.upload_url).toBe('https://r2/upload');
@@ -84,7 +86,7 @@ describe('upload presign/complete routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ filename: 'file.mp3', contentType: 'audio/mpeg', size: 1024 }),
     });
-    const res = await presignHandler(req);
+    const res = await presignPost(req);
     expect(res.status).toBe(401);
   });
 
@@ -123,7 +125,7 @@ describe('upload presign/complete routes', () => {
       body: JSON.stringify({ key: 'user-1/file.mp3', filename: 'file.mp3', contentType: 'audio/mpeg', size: 1024 }),
     });
 
-    const res = await completeHandler(req);
+    const res = await completePost(req);
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.track.id).toBe('track-1');

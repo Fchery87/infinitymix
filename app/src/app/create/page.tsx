@@ -10,7 +10,6 @@ import { FileUpload } from '@/components/file-upload';
 import { TrackList, Track } from '@/components/track-list';
 import { DurationPicker, DurationPreset } from '@/components/duration-picker';
 import { overallCompatibility } from '@/lib/utils/audio-compat';
-import { AudioPlayer } from '@/components/audio-player';
 
 export default function CreatePage() {
   const [isAuthenticated] = useState(true); // Auto-logged in for development
@@ -23,8 +22,7 @@ export default function CreatePage() {
   const [generationMessage, setGenerationMessage] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [isSmartMixing, setIsSmartMixing] = useState(false);
 
   const scoreStyles = (score: number) => {
     if (score >= 0.8) return 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300';
@@ -180,6 +178,26 @@ export default function CreatePage() {
     }
   };
 
+  const handleSmartMix = async () => {
+    try {
+      setIsSmartMixing(true);
+      const res = await fetch('/api/mashups/recommendations', { cache: 'no-store' });
+      if (!res.ok) {
+        throw new Error('Smart mix failed');
+      }
+      const data = await res.json();
+      if (Array.isArray(data.track_ids) && data.track_ids.length >= 2) {
+        setSelectedTrackIds(data.track_ids);
+        setGenerationMessage('Smart mix selected your best combination');
+      }
+    } catch (error) {
+      console.error(error);
+      alert(error instanceof Error ? error.message : 'Smart mix failed');
+    } finally {
+      setIsSmartMixing(false);
+    }
+  };
+
   const completedTracks = useMemo(() => uploadedTracks.filter((t) => t.analysis_status === 'completed'), [uploadedTracks]);
 
   const anchorTrack = useMemo(() => {
@@ -310,26 +328,17 @@ export default function CreatePage() {
                   </Button>
                   <Button
                     variant="ghost"
-                    onClick={() => {
-                      if (completedTracks.length === 0) return;
-                      const anchor = completedTracks[0];
-                      const sorted = [...completedTracks].sort((a, b) => {
-                        const { score: sa } = overallCompatibility(anchor.bpm, anchor.camelot_key ?? anchor.musical_key, { bpm: a.bpm, camelotKey: a.camelot_key ?? a.musical_key });
-                        const { score: sb } = overallCompatibility(anchor.bpm, anchor.camelot_key ?? anchor.musical_key, { bpm: b.bpm, camelotKey: b.camelot_key ?? b.musical_key });
-                        return sb - sa;
-                      });
-                      const picks = sorted.slice(0, 4).map((t) => t.id);
-                      setSelectedTrackIds(picks);
-                    }}
+                    onClick={handleSmartMix}
+                    disabled={isSmartMixing}
                     className="h-12 text-primary hover:text-primary"
                   >
-                    Surprise me
+                    {isSmartMixing ? 'Selecting…' : 'Smart mix'}
                   </Button>
                 </div>
                 {previewUrl && (
                   <div className="rounded-lg border border-white/5 bg-black/30 p-3">
                     <p className="text-xs text-gray-400 mb-2">Preview (temporary)</p>
-                    <AudioPlayer src={previewUrl} />
+                    <audio controls src={previewUrl ?? undefined} className="w-full" />
                   </div>
                 )}
               </CardContent>

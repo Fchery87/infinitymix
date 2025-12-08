@@ -4,11 +4,11 @@ import { db } from '@/lib/db';
 import { mashups, mashupInputTracks, uploadedTracks } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
 
-export async function POST(request: NextRequest, { params }: { params: { mashupId: string } }) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ mashupId: string }> }) {
   const user = await getSessionUser(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const mashupId = params.mashupId;
+  const { mashupId } = await params;
   if (!mashupId) return NextResponse.json({ error: 'mashupId is required' }, { status: 400 });
 
   const [source] = await db
@@ -46,7 +46,9 @@ export async function POST(request: NextRequest, { params }: { params: { mashupI
       parentMashupId: source.id,
       isPublic: false,
     })
-    .returning();
+    .returning({ id: mashups.id, name: mashups.name, parentMashupId: mashups.parentMashupId, targetDurationSeconds: mashups.targetDurationSeconds });
+
+  if (!created) return NextResponse.json({ error: 'Failed to fork mashup' }, { status: 500 });
 
   const relations = trackIds.map(trackId => ({ mashupId: created.id, uploadedTrackId: trackId }));
   await db.insert(mashupInputTracks).values(relations);

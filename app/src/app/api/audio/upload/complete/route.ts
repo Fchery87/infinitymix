@@ -6,14 +6,14 @@ import { uploadedTracks } from '@/lib/db/schema';
 import { completeUploadSchema } from '@/lib/utils/validation';
 import { ValidationError, AuthenticationError } from '@/lib/utils/error-handling';
 import { getStorage } from '@/lib/storage';
-import { startTrackAnalysis } from '@/lib/audio/analysis-service';
+import { enqueueAnalysis } from '@/lib/queue';
 import { formatTrackResponse } from '@/lib/audio/upload-service';
 import { uploadRateLimit, withRateLimit } from '@/lib/utils/rate-limiting';
 
 const ALLOWED_TYPES = ['audio/mpeg', 'audio/wav', 'audio/mp3', 'audio/wave'];
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 
-export async function completeHandler(request: NextRequest) {
+async function completeHandler(request: NextRequest) {
   try {
     const user = await getSessionUser(request);
     if (!user) throw new AuthenticationError('Authentication required');
@@ -55,7 +55,8 @@ export async function completeHandler(request: NextRequest) {
       .returning();
 
     // Fire and forget analysis using downloaded buffer
-    void startTrackAnalysis({
+    void enqueueAnalysis({
+      type: 'analysis',
       trackId: track.id,
       buffer: fileObject.buffer,
       storageUrl: locator,

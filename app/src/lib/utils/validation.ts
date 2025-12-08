@@ -34,6 +34,7 @@ export const completeUploadSchema = z.object({
 export const mashupGenerateSchema = z.object({
   inputFileIds: z.array(z.string().uuid()).min(2, 'At least 2 files are required').max(5, 'Maximum 5 files allowed'),
   durationPreset: z.enum(['1_minute', '2_minutes', '3_minutes']),
+  mixMode: z.enum(['standard', 'vocals_over_instrumental', 'drum_swap']).default('standard').optional(),
 });
 
 // Feedback schema

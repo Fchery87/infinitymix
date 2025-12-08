@@ -4,8 +4,9 @@ import { db } from '@/lib/db';
 import { mashups, mashupInputTracks, uploadedTracks } from '@/lib/db/schema';
 import { mashupGenerateSchema } from '@/lib/utils/validation';
 import { generateMashupName } from '@/lib/utils/helpers';
-import { renderMashup } from '@/lib/audio/mixing-service';
+import { enqueueMix } from '@/lib/queue';
 import { logTelemetry, withTelemetry } from '@/lib/telemetry';
+import { assertDurationQuota } from '@/lib/monetization';
 import { eq, and, inArray } from 'drizzle-orm';
 import { ZodError } from 'zod';
 
@@ -26,7 +27,7 @@ export async function POST(request: NextRequest) {
 
     const requestStarted = Date.now();
     const body = await request.json();
-    const { inputFileIds, durationPreset } = mashupGenerateSchema.parse(body);
+    const { inputFileIds, durationPreset, mixMode = 'standard' } = mashupGenerateSchema.parse(body);
 
     logTelemetry({
       name: 'mashup.generate.requested',
@@ -74,6 +75,9 @@ export async function POST(request: NextRequest) {
     };
     const durationSeconds = durationMap[durationPreset as keyof typeof durationMap];
 
+    // Enforce plan quota
+    await assertDurationQuota(user.id, durationSeconds);
+
     // Create mashup record
     const [mashup] = await db
       .insert(mashups)
@@ -84,8 +88,23 @@ export async function POST(request: NextRequest) {
         generationStatus: 'pending',
         outputFormat: 'mp3',
         isPublic: false,
+        mixMode,
       })
-      .returning();
+      .returning({
+        id: mashups.id,
+        userId: mashups.userId,
+        targetDurationSeconds: mashups.targetDurationSeconds,
+        generationStatus: mashups.generationStatus,
+        outputFormat: mashups.outputFormat,
+        isPublic: mashups.isPublic,
+        mixMode: mashups.mixMode,
+        createdAt: mashups.createdAt,
+        updatedAt: mashups.updatedAt,
+      });
+
+    if (!mashup) {
+      return NextResponse.json({ error: 'Failed to create mashup' }, { status: 500 });
+    }
 
     // Link mashup to input tracks
     const trackRelations = inputFileIds.map(trackId => ({
@@ -95,12 +114,17 @@ export async function POST(request: NextRequest) {
 
     await db.insert(mashupInputTracks).values(trackRelations);
 
-    // Start async generation process
-    void withTelemetry('mashup.generate.render', () => renderMashup(mashup.id, inputFileIds, durationSeconds), {
-      mashupId: mashup.id,
-      trackCount: inputFileIds.length,
-      durationSeconds,
-    });
+    // Start async generation process (queued)
+    void withTelemetry(
+      'mashup.generate.render',
+      () => enqueueMix({ type: 'mix', mashupId: mashup.id, inputTrackIds: inputFileIds, durationSeconds, mixMode }),
+      {
+        mashupId: mashup.id,
+        trackCount: inputFileIds.length,
+        mixMode,
+        durationSeconds,
+      }
+    );
 
     logTelemetry({
       name: 'mashup.generate.accepted',
@@ -121,6 +145,7 @@ export async function POST(request: NextRequest) {
       output_path: null,
       output_format: mashup.outputFormat,
       generation_time_ms: null,
+      mix_mode: mashup.mixMode,
       created_at: mashup.createdAt,
       updated_at: mashup.updatedAt,
     });
@@ -135,6 +160,10 @@ export async function POST(request: NextRequest) {
         { error: 'Validation failed', details: error.errors },
         { status: 400 }
       );
+    }
+
+    if (error instanceof Error && error.message.toLowerCase().includes('quota')) {
+      return NextResponse.json({ error: error.message }, { status: 402 });
     }
 
     return NextResponse.json(

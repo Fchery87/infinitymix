@@ -13,10 +13,29 @@ export interface Track {
   musical_key: string | null;
   camelot_key?: string | null;
   beat_grid?: number[];
+   waveform_lite?: number[];
+   drop_moments?: number[];
+   structure?: Array<{ label: string; start: number; end: number; confidence: number }>;
   created_at: string;
 }
 
-function Waveform({ beatGrid }: { beatGrid?: number[] }) {
+function Waveform({ beatGrid, waveformLite }: { beatGrid?: number[]; waveformLite?: number[] }) {
+  if (waveformLite && waveformLite.length > 0) {
+    const peak = Math.max(...waveformLite, 1);
+    const normalized = waveformLite.slice(0, 200).map((v) => Math.min(1, v / peak));
+    return (
+      <div className="mt-2 flex h-12 items-end gap-0.5 overflow-hidden">
+        {normalized.map((v, idx) => (
+          <div
+            key={idx}
+            className="flex-1 rounded-sm bg-gradient-to-t from-primary/30 via-primary/60 to-white/80"
+            style={{ height: `${Math.max(8, Math.round(v * 100))}%` }}
+          />
+        ))}
+      </div>
+    );
+  }
+
   if (!beatGrid || beatGrid.length < 2) return null;
   const intervals = beatGrid.slice(1).map((t, i) => Math.max(0.05, Math.min(1, (t - beatGrid[i]) / 2)));
   const bars = intervals.slice(0, 32);
@@ -137,7 +156,10 @@ export function TrackList({ tracks, onRemoveTrack, className }: TrackListProps) 
                     )}
                   </div>
                 )}
-                {track.analysis_status === 'completed' && <Waveform beatGrid={track.beat_grid} />}
+                {track.analysis_status === 'completed' && <Waveform beatGrid={track.beat_grid} waveformLite={track.waveform_lite} />}
+                {track.analysis_status === 'completed' && track.drop_moments && track.drop_moments.length > 0 && (
+                  <div className="mt-2 text-[11px] text-primary/80">Drops near {track.drop_moments.slice(0, 3).map((t) => `${Math.round(t)}s`).join(', ')}</div>
+                )}
               </motion.div>
             ))}
           </div>

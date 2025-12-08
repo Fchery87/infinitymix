@@ -13,6 +13,7 @@ const OUTPUT_SAMPLE_RATE = 44100;
 const OUTPUT_CHANNELS = 2;
 const OUTPUT_FORMAT = 'mp3';
 const DEFAULT_TARGET_BPM = 120;
+type MixMode = 'standard' | 'vocals_over_instrumental' | 'drum_swap';
 
 if (ffmpegStatic) {
   ffmpeg.setFfmpegPath(ffmpegStatic as string);
@@ -50,7 +51,17 @@ function buildAtempoChain(ratio: number) {
   return filters.join(',');
 }
 
-export async function mixToBuffer(tracks: PreparedTrack[], durationSeconds: number) {
+function modeFilters(mode: MixMode, index: number) {
+  if (mode === 'vocals_over_instrumental') {
+    return index === 0 ? 'highpass=f=1200,acompressor' : 'lowpass=f=1800,compand';
+  }
+  if (mode === 'drum_swap') {
+    return index === 0 ? 'alimiter' : 'highpass=f=150,compand';
+  }
+  return '';
+}
+
+export async function mixToBuffer(tracks: PreparedTrack[], durationSeconds: number, mode: MixMode = 'standard') {
   if (!ffmpegStatic) {
     throw new Error('ffmpeg-static binary not available for mixing');
   }
@@ -73,7 +84,8 @@ export async function mixToBuffer(tracks: PreparedTrack[], durationSeconds: numb
   tracks.forEach((track, idx) => {
     const ratio = track.bpm && track.bpm > 0 ? targetBpm / track.bpm : 1;
     const atempo = buildAtempoChain(ratio);
-    const chain = [atempo, `volume=${volumePerTrack}`].filter(Boolean).join(',');
+    const modeFilter = modeFilters(mode, idx);
+    const chain = [atempo, modeFilter, `volume=${volumePerTrack}`].filter(Boolean).join(',');
     const inputLabel = `${idx}:a`;
     const outputLabel = `a${idx}`;
     filterChains.push(`[${inputLabel}]${chain || 'anull'}[${outputLabel}]`);
@@ -139,7 +151,7 @@ async function loadTracks(inputTrackIds: string[]): Promise<PreparedTrack[]> {
   return tracks;
 }
 
-export async function renderMashup(mashupId: string, inputTrackIds: string[], durationSeconds: number) {
+export async function renderMashup(mashupId: string, inputTrackIds: string[], durationSeconds: number, mixMode: MixMode = 'standard') {
   const startedAt = Date.now();
 
   try {
@@ -150,11 +162,11 @@ export async function renderMashup(mashupId: string, inputTrackIds: string[], du
 
     await db
       .update(mashups)
-      .set({ generationStatus: 'generating', updatedAt: new Date() })
+      .set({ generationStatus: 'generating', mixMode, updatedAt: new Date() })
       .where(eq(mashups.id, mashupId));
 
     const tracks = await loadTracks(inputTrackIds);
-    const outputBuffer = await mixToBuffer(tracks, durationSeconds);
+    const outputBuffer = await mixToBuffer(tracks, durationSeconds, mixMode);
     const storage = await getStorage();
     const outputUrl = await storage.uploadFile(outputBuffer, `${mashupId}.${OUTPUT_FORMAT}`, 'audio/mpeg');
 
@@ -165,8 +177,10 @@ export async function renderMashup(mashupId: string, inputTrackIds: string[], du
       .set({
         generationStatus: 'completed',
         outputStorageUrl: outputUrl,
+        publicPlaybackUrl: outputUrl,
         outputFormat: OUTPUT_FORMAT,
         generationTimeMs: processingTime,
+        mixMode,
         updatedAt: new Date(),
       })
       .where(eq(mashups.id, mashupId));
@@ -179,6 +193,7 @@ export async function renderMashup(mashupId: string, inputTrackIds: string[], du
         durationSeconds,
         processingTimeMs: processingTime,
         outputUrl,
+        mixMode,
       },
     });
 

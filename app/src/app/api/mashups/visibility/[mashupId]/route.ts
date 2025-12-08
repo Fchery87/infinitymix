@@ -5,11 +5,11 @@ import { mashups } from '@/lib/db/schema';
 import { nanoid } from 'nanoid';
 import { eq, and } from 'drizzle-orm';
 
-export async function PATCH(request: NextRequest, { params }: { params: { mashupId: string } }) {
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ mashupId: string }> }) {
   const user = await getSessionUser(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const mashupId = params.mashupId;
+  const { mashupId } = await params;
   if (!mashupId) return NextResponse.json({ error: 'mashupId is required' }, { status: 400 });
 
   if (!request.headers.get('content-type')?.includes('application/json')) {

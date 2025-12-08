@@ -8,7 +8,7 @@ import { uploadRateLimit, withRateLimit } from '@/lib/utils/rate-limiting';
 const ALLOWED_TYPES = ['audio/mpeg', 'audio/wav', 'audio/mp3', 'audio/wave'];
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 
-export async function presignHandler(request: NextRequest) {
+async function presignHandler(request: NextRequest) {
   try {
     const user = await getSessionUser(request);
     if (!user) throw new AuthenticationError('Authentication required');

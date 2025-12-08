@@ -1,0 +1,14 @@
+# Demucs Stem Separation Service Dependencies
+
+# Web framework
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+python-multipart==0.0.9
+
+# AI/ML
+torch>=2.0.0
+torchaudio>=2.0.0
+demucs>=4.0.0
+
+# Utilities
+pydantic>=2.0.0

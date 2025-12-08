@@ -112,25 +112,55 @@ export async function mixToBuffer(tracks: PreparedTrack[], durationSeconds: numb
     command
       .complexFilter(filterChains, 'mixed')
       .outputOptions([
-        '-map [mixed]',
         `-ac ${OUTPUT_CHANNELS}`,
         `-ar ${OUTPUT_SAMPLE_RATE}`,
         `-t ${safeDuration}`,
         '-b:a 192k',
-        '-f mp3',
-      ]);
-    command.output('pipe:1');
+      ])
+      .format('mp3');
 
     const chunks: Buffer[] = [];
 
+    console.log(`🎵 FFmpeg: Starting mix with ${tracks.length} tracks, duration=${safeDuration}s`);
+    console.log(`🎵 FFmpeg: Filter chains: ${JSON.stringify(filterChains)}`);
+
     const result = await new Promise<Buffer>((resolve, reject) => {
-      command.on('error', reject);
+      command.on('start', (cmdline) => {
+        console.log(`🎵 FFmpeg command: ${cmdline}`);
+      });
+      
+      command.on('stderr', (stderrLine) => {
+        // Log FFmpeg progress/errors
+        if (stderrLine.includes('Error') || stderrLine.includes('error')) {
+          console.error(`🎵 FFmpeg stderr: ${stderrLine}`);
+        }
+      });
+      
+      command.on('error', (err) => {
+        console.error(`❌ FFmpeg error:`, err);
+        reject(err);
+      });
+      
+      command.on('end', () => {
+        console.log(`✅ FFmpeg completed, output size: ${chunks.reduce((a, b) => a + b.length, 0)} bytes`);
+      });
+      
       const output = command.pipe();
-      output.on('data', chunk => chunks.push(chunk));
-      output.on('end', () => resolve(Buffer.concat(chunks)));
-      output.on('error', reject);
+      output.on('data', chunk => {
+        chunks.push(chunk);
+      });
+      output.on('end', () => {
+        const totalSize = chunks.reduce((a, b) => a + b.length, 0);
+        console.log(`✅ FFmpeg stream ended, total: ${totalSize} bytes`);
+        resolve(Buffer.concat(chunks));
+      });
+      output.on('error', (err) => {
+        console.error(`❌ FFmpeg stream error:`, err);
+        reject(err);
+      });
     });
 
+    console.log(`✅ Mix complete: ${result.length} bytes`);
     return result;
   } finally {
     // Clean up temp files

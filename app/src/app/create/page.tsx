@@ -10,6 +10,7 @@ import { FileUpload } from '@/components/file-upload';
 import { TrackList, Track } from '@/components/track-list';
 import { DurationPicker, DurationPreset } from '@/components/duration-picker';
 import { overallCompatibility } from '@/lib/utils/audio-compat';
+import { AudioPlayer } from '@/components/audio-player';
 
 export default function CreatePage() {
   const [isAuthenticated] = useState(true); // Auto-logged in for development
@@ -20,6 +21,10 @@ export default function CreatePage() {
   const [durationPreset, setDurationPreset] = useState<DurationPreset>('2_minutes');
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [generationMessage, setGenerationMessage] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isPreviewing, setIsPreviewing] = useState(false);
 
   const scoreStyles = (score: number) => {
     if (score >= 0.8) return 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300';
@@ -147,6 +152,34 @@ export default function CreatePage() {
     }
   };
 
+  const handlePreview = async () => {
+    if (selectedTrackIds.length < 2) {
+      alert('Select at least 2 analyzed tracks to preview');
+      return;
+    }
+    setIsPreviewing(true);
+    setPreviewUrl(null);
+    try {
+      const res = await fetch('/api/mashups/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trackIds: selectedTrackIds, durationSeconds: 20 }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || 'Preview failed');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      setPreviewUrl(url);
+    } catch (error) {
+      console.error(error);
+      alert(error instanceof Error ? error.message : 'Failed to preview');
+    } finally {
+      setIsPreviewing(false);
+    }
+  };
+
   const completedTracks = useMemo(() => uploadedTracks.filter((t) => t.analysis_status === 'completed'), [uploadedTracks]);
 
   const anchorTrack = useMemo(() => {
@@ -259,6 +292,48 @@ export default function CreatePage() {
                 value={durationPreset} 
                 onChange={setDurationPreset} 
             />
+
+            {/* Preview + surprise me */}
+            <Card className="bg-card/60 backdrop-blur-xl border-white/10">
+              <CardContent className="pt-6 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-gray-400">Quick actions</p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Button
+                    variant="outline"
+                    disabled={isPreviewing || selectedTrackIds.length < 2}
+                    onClick={handlePreview}
+                    className="h-12 border-white/10 hover:border-primary/30 hover:text-primary"
+                  >
+                    {isPreviewing ? 'Rendering preview…' : 'Preview 20s'}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      if (completedTracks.length === 0) return;
+                      const anchor = completedTracks[0];
+                      const sorted = [...completedTracks].sort((a, b) => {
+                        const { score: sa } = overallCompatibility(anchor.bpm, anchor.camelot_key ?? anchor.musical_key, { bpm: a.bpm, camelotKey: a.camelot_key ?? a.musical_key });
+                        const { score: sb } = overallCompatibility(anchor.bpm, anchor.camelot_key ?? anchor.musical_key, { bpm: b.bpm, camelotKey: b.camelot_key ?? b.musical_key });
+                        return sb - sa;
+                      });
+                      const picks = sorted.slice(0, 4).map((t) => t.id);
+                      setSelectedTrackIds(picks);
+                    }}
+                    className="h-12 text-primary hover:text-primary"
+                  >
+                    Surprise me
+                  </Button>
+                </div>
+                {previewUrl && (
+                  <div className="rounded-lg border border-white/5 bg-black/30 p-3">
+                    <p className="text-xs text-gray-400 mb-2">Preview (temporary)</p>
+                    <AudioPlayer src={previewUrl} />
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
             {/* Compatibility helper */}
             <Card className="bg-card/60 backdrop-blur-xl border-white/10">

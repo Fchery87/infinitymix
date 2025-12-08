@@ -25,7 +25,7 @@ type TrackSource = {
   bpm: number | null;
 };
 
-type PreparedTrack = TrackSource & {
+export type PreparedTrack = TrackSource & {
   buffer: Buffer;
 };
 
@@ -50,7 +50,7 @@ function buildAtempoChain(ratio: number) {
   return filters.join(',');
 }
 
-async function mixToBuffer(tracks: PreparedTrack[], durationSeconds: number) {
+export async function mixToBuffer(tracks: PreparedTrack[], durationSeconds: number) {
   if (!ffmpegStatic) {
     throw new Error('ffmpeg-static binary not available for mixing');
   }

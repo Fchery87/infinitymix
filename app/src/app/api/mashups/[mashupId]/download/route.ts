@@ -61,9 +61,12 @@ export async function GET(
     let fileBuffer: ArrayBuffer;
     let mimeType = mashup.outputFormat === 'mp3' ? 'audio/mpeg' : 'audio/wav';
 
+    console.log(`📥 Download: Fetching mashup ${mashupId} from ${mashup.outputStorageUrl}`);
+
     if (storage.getFile) {
       const stored = await storage.getFile(mashup.outputStorageUrl);
       if (!stored) {
+        console.error(`❌ Download: File not found in storage for ${mashupId}`);
         return NextResponse.json(
           { error: 'File not available for download' },
           { status: 500 }
@@ -71,9 +74,12 @@ export async function GET(
       }
       fileBuffer = stored.buffer;
       mimeType = stored.mimeType || mimeType;
+      console.log(`✅ Download: Got ${fileBuffer.byteLength} bytes, mime=${mimeType}`);
     } else {
+      console.log(`⚠️ Download: No getFile, fetching directly from URL`);
       const response = await fetch(mashup.outputStorageUrl);
       if (!response.ok) {
+        console.error(`❌ Download: Direct fetch failed for ${mashupId}`);
         return NextResponse.json(
           { error: 'File not available for download' },
           { status: 500 }

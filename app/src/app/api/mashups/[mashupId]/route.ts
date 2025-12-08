@@ -1,37 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth/config';
+import { getSessionUser } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { mashups, mashupInputTracks, uploadedTracks } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
 
 export async function GET(
   request: NextRequest,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any
+  { params }: { params: Promise<{ mashupId: string }> }
 ) {
   try {
-    const { params } = context || {};
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
+    const { mashupId } = await params;
+    const user = await getSessionUser(request);
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!mashupId) return NextResponse.json({ error: 'Mashup ID is required' }, { status: 400 });
 
-    if (!session) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-
-    const mashupId = params?.mashupId;
-
-    if (!mashupId) {
-      return NextResponse.json(
-        { error: 'Mashup ID is required' },
-        { status: 400 }
-      );
-    }
-
-    // Get mashup details including input tracks
     const [mashup] = await db
       .select({
         id: mashups.id,
@@ -48,19 +30,10 @@ export async function GET(
         updatedAt: mashups.updatedAt,
       })
       .from(mashups)
-      .where(and(
-        eq(mashups.id, mashupId),
-        eq(mashups.userId, session.user.id)
-      ));
+      .where(and(eq(mashups.id, mashupId), eq(mashups.userId, user.id)));
 
-    if (!mashup) {
-      return NextResponse.json(
-        { error: 'Mashup not found' },
-        { status: 404 }
-      );
-    }
+    if (!mashup) return NextResponse.json({ error: 'Mashup not found' }, { status: 404 });
 
-    // Get input tracks for this mashup
     const inputTracks = await db
       .select({
         id: uploadedTracks.id,
@@ -89,75 +62,34 @@ export async function GET(
     });
   } catch (error) {
     console.error('Get mashup error:', error);
-    return NextResponse.json(
-      { error: 'Failed to retrieve mashup' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to retrieve mashup' }, { status: 500 });
   }
 }
 
 export async function DELETE(
   request: NextRequest,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any
+  { params }: { params: Promise<{ mashupId: string }> }
 ) {
   try {
-    const { params } = context || {};
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
+    const { mashupId } = await params;
+    const user = await getSessionUser(request);
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!mashupId) return NextResponse.json({ error: 'Mashup ID is required' }, { status: 400 });
 
-    if (!session) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-
-    const mashupId = params?.mashupId;
-
-    if (!mashupId) {
-      return NextResponse.json(
-        { error: 'Mashup ID is required' },
-        { status: 400 }
-      );
-    }
-
-    // Check if mashup exists and belongs to user
     const [mashup] = await db
       .select({ id: mashups.id, outputStorageUrl: mashups.outputStorageUrl })
       .from(mashups)
-      .where(and(
-        eq(mashups.id, mashupId),
-        eq(mashups.userId, session.user.id)
-      ));
+      .where(and(eq(mashups.id, mashupId), eq(mashups.userId, user.id)));
 
-    if (!mashup) {
-      return NextResponse.json(
-        { error: 'Mashup not found' },
-        { status: 404 }
-      );
-    }
+    if (!mashup) return NextResponse.json({ error: 'Mashup not found' }, { status: 404 });
 
-    // TODO: Delete file from cloud storage if it exists
-    // if (mashup.outputStorageUrl) {
-    //   await deleteFromCloudStorage(mashup.outputStorageUrl);
-    // }
-
-    // Delete mashup (cascade will delete related records)
     await db
       .delete(mashups)
-      .where(and(
-        eq(mashups.id, mashupId),
-        eq(mashups.userId, session.user.id)
-      ));
+      .where(and(eq(mashups.id, mashupId), eq(mashups.userId, user.id)));
 
     return new NextResponse(null, { status: 204 });
   } catch (error) {
     console.error('Delete mashup error:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete mashup' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to delete mashup' }, { status: 500 });
   }
 }

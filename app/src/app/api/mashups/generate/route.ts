@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth/config';
+import { getSessionUser } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { mashups, mashupInputTracks, uploadedTracks } from '@/lib/db/schema';
 import { mashupGenerateSchema } from '@/lib/utils/validation';
@@ -11,15 +11,9 @@ import { ZodError } from 'zod';
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
-
-    if (!session) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
+    const user = await getSessionUser(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const contentType = request.headers.get('content-type') || '';
@@ -37,7 +31,7 @@ export async function POST(request: NextRequest) {
     logTelemetry({
       name: 'mashup.generate.requested',
       properties: {
-        userId: session.user.id,
+        userId: user.id,
         trackCount: inputFileIds.length,
         durationPreset,
       },
@@ -53,7 +47,7 @@ export async function POST(request: NextRequest) {
       })
       .from(uploadedTracks)
       .where(and(
-        eq(uploadedTracks.userId, session.user.id),
+        eq(uploadedTracks.userId, user.id),
         inArray(uploadedTracks.id, inputFileIds)
       ));
 
@@ -84,7 +78,7 @@ export async function POST(request: NextRequest) {
     const [mashup] = await db
       .insert(mashups)
       .values({
-        userId: session.user.id,
+        userId: user.id,
         name: generateMashupName(),
         targetDurationSeconds: durationSeconds,
         generationStatus: 'pending',
@@ -111,7 +105,7 @@ export async function POST(request: NextRequest) {
       name: 'mashup.generate.accepted',
       properties: {
         mashupId: mashup.id,
-        userId: session.user.id,
+        userId: user.id,
         durationSeconds,
         trackCount: inputFileIds.length,
         latencyMs: Date.now() - requestStarted,

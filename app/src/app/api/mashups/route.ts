@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth/config';
+import { getSessionUser } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { mashups } from '@/lib/db/schema';
 import { log } from '@/lib/logger';
@@ -7,11 +7,8 @@ import { eq, desc, count } from 'drizzle-orm';
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
-
-    if (!session) {
+    const user = await getSessionUser(request);
+    if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
@@ -29,7 +26,7 @@ export async function GET(request: NextRequest) {
     const [totalCount] = await db
       .select({ count: count() })
       .from(mashups)
-      .where(eq(mashups.userId, session.user.id));
+      .where(eq(mashups.userId, user.id));
 
     // Get mashups with pagination
     const userMashups = await db
@@ -48,7 +45,7 @@ export async function GET(request: NextRequest) {
         updatedAt: mashups.updatedAt,
       })
       .from(mashups)
-      .where(eq(mashups.userId, session.user.id))
+      .where(eq(mashups.userId, user.id))
       .orderBy(desc(mashups.createdAt))
       .limit(limit)
       .offset(offset);

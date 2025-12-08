@@ -24,11 +24,13 @@ vi.mock('@/lib/utils/rate-limiting', () => ({
 vi.mock('@/lib/db', () => ({
   db: {
     insert: vi.fn(),
+    select: vi.fn().mockReturnValue({ from: vi.fn().mockReturnValue({ where: vi.fn().mockReturnValue({ limit: vi.fn().mockReturnValue([]) }) }) }),
   },
 }));
 
 vi.mock('@/lib/db/schema', () => ({
   uploadedTracks: {},
+  users: {},
 }));
 
 vi.mock('@/lib/audio/analysis-service', () => ({
@@ -75,6 +77,8 @@ describe('upload presign/complete routes', () => {
   it('rejects presign without auth', async () => {
     const sessionMock = auth.api.getSession as unknown as Mock;
     sessionMock.mockResolvedValue(null);
+    const storageMock = getStorage as unknown as Mock;
+    storageMock.mockResolvedValue({});
     const req = new NextRequest('http://localhost/api/audio/upload/presign', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

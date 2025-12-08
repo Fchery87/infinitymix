@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth/config';
+import { getSessionUser } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { mashups } from '@/lib/db/schema';
 import { getStorage } from '@/lib/storage';
@@ -9,23 +9,14 @@ import { eq, and, sql } from 'drizzle-orm';
 
 export async function GET(
   request: NextRequest,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any
+  { params }: { params: Promise<{ mashupId: string }> }
 ) {
   try {
-    const { params } = context || {};
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
-
-    if (!session) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
+    const { mashupId } = await params;
+    const user = await getSessionUser(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
-    const mashupId = params?.mashupId;
 
     if (!mashupId) {
       return NextResponse.json(
@@ -49,7 +40,7 @@ export async function GET(
       .from(mashups)
       .where(and(
         eq(mashups.id, mashupId),
-        eq(mashups.userId, session.user.id)
+        eq(mashups.userId, user.id)
       ));
 
     if (!mashup) {
@@ -106,14 +97,14 @@ export async function GET(
       name: 'mashup.download',
       properties: {
         mashupId,
-        userId: session.user.id,
+        userId: user.id,
         streamOnly,
         outputFormat: mashup.outputFormat,
       },
     });
     log('info', 'mashup.download', {
       mashupId,
-      userId: session.user.id,
+      userId: user.id,
       streamOnly,
       outputFormat: mashup.outputFormat,
     });

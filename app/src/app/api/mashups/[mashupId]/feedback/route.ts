@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth/config';
+import { getSessionUser } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { feedback, mashups } from '@/lib/db/schema';
 import { feedbackSchema } from '@/lib/utils/validation';
@@ -8,23 +8,14 @@ import { ZodError } from 'zod';
 
 export async function POST(
   request: NextRequest,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any
+  { params }: { params: Promise<{ mashupId: string }> }
 ) {
   try {
-    const { params } = context || {};
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
-
-    if (!session) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
+    const { mashupId } = await params;
+    const user = await getSessionUser(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
-    const mashupId = params?.mashupId;
 
     if (!mashupId) {
       return NextResponse.json(
@@ -41,7 +32,7 @@ export async function POST(
       .from(mashups)
       .where(and(
         eq(mashups.id, mashupId),
-        eq(mashups.userId, session.user.id)
+        eq(mashups.userId, user.id)
       ));
 
     if (!mashup) {
@@ -57,7 +48,7 @@ export async function POST(
       .from(feedback)
       .where(and(
         eq(feedback.mashupId, mashupId),
-        eq(feedback.userId, session.user.id)
+        eq(feedback.userId, user.id)
       ));
 
     if (existingFeedback) {
@@ -71,7 +62,7 @@ export async function POST(
     const [newFeedback] = await db
       .insert(feedback)
       .values({
-        userId: session.user.id,
+        userId: user.id,
         mashupId,
         rating,
         comments: comments || null,

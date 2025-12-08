@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth/config';
+import { getSessionUser } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { mashups } from '@/lib/db/schema';
 import { and, eq, sql } from 'drizzle-orm';
@@ -8,20 +8,14 @@ import { log } from '@/lib/logger';
 
 export async function POST(
   request: NextRequest,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any
+  { params }: { params: Promise<{ mashupId: string }> }
 ) {
   try {
-    const { params } = context || {};
-    const session = await auth.api.getSession({
-      headers: request.headers,
-    });
-
-    if (!session) {
+    const { mashupId } = await params;
+    const user = await getSessionUser(request);
+    if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
-    const mashupId = params?.mashupId;
 
     if (!mashupId) {
       return NextResponse.json({ error: 'Mashup ID is required' }, { status: 400 });
@@ -30,7 +24,7 @@ export async function POST(
     const [mashup] = await db
       .select({ id: mashups.id, generationStatus: mashups.generationStatus, outputStorageUrl: mashups.outputStorageUrl })
       .from(mashups)
-      .where(and(eq(mashups.id, mashupId), eq(mashups.userId, session.user.id)));
+      .where(and(eq(mashups.id, mashupId), eq(mashups.userId, user.id)));
 
     if (!mashup) {
       return NextResponse.json({ error: 'Mashup not found' }, { status: 404 });
@@ -53,11 +47,11 @@ export async function POST(
       name: 'mashup.play',
       properties: {
         mashupId,
-        userId: session.user.id,
+        userId: user.id,
         playbackCount: updated.playbackCount,
       },
     });
-    log('info', 'mashup.play', { mashupId, userId: session.user.id, playbackCount: updated.playbackCount });
+    log('info', 'mashup.play', { mashupId, userId: user.id, playbackCount: updated.playbackCount });
 
     return NextResponse.json({ playback_count: updated.playbackCount });
   } catch (error) {

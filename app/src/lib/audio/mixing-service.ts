@@ -4,43 +4,144 @@ import { getStorage } from '@/lib/storage';
 import { handleAsyncError } from '@/lib/utils/error-handling';
 import { logTelemetry } from '@/lib/telemetry';
 import { log } from '@/lib/logger';
-import { eq } from 'drizzle-orm';
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegStatic from 'ffmpeg-static';
+import { Readable } from 'node:stream';
+import { eq, inArray } from 'drizzle-orm';
 
-function generateSineWaveWav(durationSeconds: number, frequency = 440, sampleRate = 8000): Buffer {
-  const sampleCount = Math.max(1, Math.floor(durationSeconds * sampleRate));
-  const dataSize = sampleCount * 2; // 16-bit mono
-  const buffer = Buffer.alloc(44 + dataSize);
+const OUTPUT_SAMPLE_RATE = 44100;
+const OUTPUT_CHANNELS = 2;
+const OUTPUT_FORMAT = 'mp3';
+const DEFAULT_TARGET_BPM = 120;
 
-  buffer.write('RIFF', 0);
-  buffer.writeUInt32LE(36 + dataSize, 4);
-  buffer.write('WAVE', 8);
-  buffer.write('fmt ', 12);
-  buffer.writeUInt32LE(16, 16); // PCM chunk size
-  buffer.writeUInt16LE(1, 20); // PCM format
-  buffer.writeUInt16LE(1, 22); // channels
-  buffer.writeUInt32LE(sampleRate, 24);
-  buffer.writeUInt32LE(sampleRate * 2, 28); // byte rate
-  buffer.writeUInt16LE(2, 32); // block align
-  buffer.writeUInt16LE(16, 34); // bits per sample
-  buffer.write('data', 36);
-  buffer.writeUInt32LE(dataSize, 40);
-
-  for (let i = 0; i < sampleCount; i++) {
-    const t = i / sampleRate;
-    const sample = Math.sin(2 * Math.PI * frequency * t) * 0.2;
-    buffer.writeInt16LE(Math.floor(sample * 0x7fff), 44 + i * 2);
-  }
-
-  return buffer;
+if (ffmpegStatic) {
+  ffmpeg.setFfmpegPath(ffmpegStatic as string);
 }
 
-function calculateRenderTime(trackCount: number, durationSeconds: number) {
-  const base = 4000 + trackCount * 800;
-  const durationFactor = Math.min(6000, Math.max(1500, durationSeconds * 8));
-  return base + durationFactor;
+type TrackSource = {
+  id: string;
+  storageUrl: string;
+  mimeType: string;
+  bpm: number | null;
+};
+
+type PreparedTrack = TrackSource & {
+  buffer: Buffer;
+};
+
+function buildAtempoChain(ratio: number) {
+  const filters: string[] = [];
+  let value = ratio;
+
+  while (value > 2) {
+    filters.push('atempo=2');
+    value = value / 2;
+  }
+
+  while (value < 0.5) {
+    filters.push('atempo=0.5');
+    value = value / 0.5;
+  }
+
+  if (Math.abs(value - 1) > 0.01) {
+    filters.push(`atempo=${Number(value.toFixed(2))}`);
+  }
+
+  return filters.join(',');
+}
+
+async function mixToBuffer(tracks: PreparedTrack[], durationSeconds: number) {
+  if (!ffmpegStatic) {
+    throw new Error('ffmpeg-static binary not available for mixing');
+  }
+
+  const safeDuration = Math.max(5, Number.isFinite(durationSeconds) ? durationSeconds : 60);
+  const targetBpm = tracks.map(t => t.bpm).filter((bpm): bpm is number => Number.isFinite(bpm)).at(0) ?? DEFAULT_TARGET_BPM;
+  const inputCount = tracks.length;
+  const volumePerTrack = Number((1 / Math.max(1, inputCount)).toFixed(3));
+
+  const command = ffmpeg();
+  tracks.forEach((track) => {
+    const stream = Readable.from(track.buffer);
+    const input = command.input(stream);
+    if (track.mimeType.includes('wav')) {
+      input.inputFormat('wav');
+    }
+  });
+
+  const filterChains: string[] = [];
+  tracks.forEach((track, idx) => {
+    const ratio = track.bpm && track.bpm > 0 ? targetBpm / track.bpm : 1;
+    const atempo = buildAtempoChain(ratio);
+    const chain = [atempo, `volume=${volumePerTrack}`].filter(Boolean).join(',');
+    const inputLabel = `${idx}:a`;
+    const outputLabel = `a${idx}`;
+    filterChains.push(`[${inputLabel}]${chain || 'anull'}[${outputLabel}]`);
+  });
+
+  const inputLabels = tracks.map((_, idx) => `[a${idx}]`).join('');
+  filterChains.push(`${inputLabels}amix=inputs=${inputCount}:duration=shortest:normalize=0[mixed]`);
+
+  command
+    .complexFilter(filterChains, 'mixed')
+    .outputOptions([
+      '-map [mixed]',
+      `-ac ${OUTPUT_CHANNELS}`,
+      `-ar ${OUTPUT_SAMPLE_RATE}`,
+      `-t ${safeDuration}`,
+      '-b:a 192k',
+      '-f mp3',
+    ]);
+  command.output('pipe:1');
+
+  const chunks: Buffer[] = [];
+
+  return new Promise<Buffer>((resolve, reject) => {
+    command.on('error', reject);
+    const output = command.pipe();
+    output.on('data', chunk => chunks.push(chunk));
+    output.on('end', () => resolve(Buffer.concat(chunks)));
+    output.on('error', reject);
+  });
+}
+
+async function loadTracks(inputTrackIds: string[]): Promise<PreparedTrack[]> {
+  const storage = await getStorage();
+  if (!storage.getFile) {
+    throw new Error('Storage driver does not support reading files (getFile)');
+  }
+
+  const records = await db
+    .select({ id: uploadedTracks.id, storageUrl: uploadedTracks.storageUrl, mimeType: uploadedTracks.mimeType, bpm: uploadedTracks.bpm })
+    .from(uploadedTracks)
+    .where(inArray(uploadedTracks.id, inputTrackIds));
+
+  if (records.length === 0) {
+    throw new Error('No input tracks found');
+  }
+
+  const tracks: PreparedTrack[] = [];
+  for (const record of records) {
+    const fetched = await storage.getFile(record.storageUrl);
+    if (!fetched?.buffer) {
+      throw new Error(`Failed to fetch audio for track ${record.id}`);
+    }
+
+    tracks.push({
+      id: record.id,
+      storageUrl: record.storageUrl,
+      mimeType: fetched.mimeType || record.mimeType || 'audio/mpeg',
+      bpm: record.bpm ? Number(record.bpm) : null,
+      buffer: fetched.buffer,
+    });
+  }
+
+  return tracks;
 }
 
 export async function renderMashup(mashupId: string, inputTrackIds: string[], durationSeconds: number) {
+  const startedAt = Date.now();
+
   try {
     logTelemetry({
       name: 'mashup.render.start',
@@ -52,41 +153,19 @@ export async function renderMashup(mashupId: string, inputTrackIds: string[], du
       .set({ generationStatus: 'generating', updatedAt: new Date() })
       .where(eq(mashups.id, mashupId));
 
-    const processingTime = calculateRenderTime(inputTrackIds.length, durationSeconds);
-    await new Promise(resolve => setTimeout(resolve, processingTime));
+    const tracks = await loadTracks(inputTrackIds);
+    const outputBuffer = await mixToBuffer(tracks, durationSeconds);
     const storage = await getStorage();
+    const outputUrl = await storage.uploadFile(outputBuffer, `${mashupId}.${OUTPUT_FORMAT}`, 'audio/mpeg');
 
-    let outputBuffer = generateSineWaveWav(durationSeconds);
-    let mimeType = 'audio/wav';
-    let extension = 'wav';
-
-    try {
-      const [source] = await db
-        .select({ storageUrl: uploadedTracks.storageUrl, mimeType: uploadedTracks.mimeType })
-        .from(uploadedTracks)
-        .where(eq(uploadedTracks.id, inputTrackIds[0]))
-        .limit(1);
-
-      if (source && storage.getFile) {
-        const fetched = await storage.getFile(source.storageUrl);
-        if (fetched?.buffer) {
-          outputBuffer = fetched.buffer;
-          mimeType = fetched.mimeType || source.mimeType || 'audio/mpeg';
-          extension = mimeType.includes('wav') ? 'wav' : 'mp3';
-        }
-      }
-    } catch (e) {
-      log('warn', 'mashup.render.source_fetch_failed', { mashupId, error: (e as Error)?.message });
-    }
-
-    const outputUrl = await storage.uploadFile(outputBuffer, `${mashupId}.${extension}`, mimeType);
+    const processingTime = Date.now() - startedAt;
 
     await db
       .update(mashups)
       .set({
         generationStatus: 'completed',
         outputStorageUrl: outputUrl,
-        outputFormat: extension,
+        outputFormat: OUTPUT_FORMAT,
         generationTimeMs: processingTime,
         updatedAt: new Date(),
       })

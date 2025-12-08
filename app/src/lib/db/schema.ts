@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, timestamp, integer, boolean, decimal, text, pgEnum, index, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, timestamp, integer, boolean, decimal, text, pgEnum, index, uniqueIndex, jsonb } from 'drizzle-orm/pg-core';
 
 // Enums
 export const uploadStatusEnum = pgEnum('upload_status', ['pending', 'uploaded', 'failed']);
@@ -74,6 +74,11 @@ export const uploadedTracks = pgTable('uploaded_tracks', {
   analysisStatus: analysisStatusEnum('analysis_status').notNull().default('pending'),
   bpm: decimal('bpm', { precision: 5, scale: 2 }),
   keySignature: varchar('key_signature', { length: 20 }),
+  camelotKey: varchar('camelot_key', { length: 10 }),
+  bpmConfidence: decimal('bpm_confidence', { precision: 4, scale: 3 }),
+  keyConfidence: decimal('key_confidence', { precision: 4, scale: 3 }),
+  beatGrid: jsonb('beat_grid').$type<number[]>(),
+  analysisVersion: varchar('analysis_version', { length: 20 }).default('phase1-v1'),
   durationSeconds: decimal('duration_seconds', { precision: 7, scale: 2 }),
   hasStems: boolean('has_stems').notNull().default(false),
   createdAt: timestamp('created_at').notNull().defaultNow(),

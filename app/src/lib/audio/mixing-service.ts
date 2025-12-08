@@ -6,7 +6,6 @@ import { logTelemetry } from '@/lib/telemetry';
 import { log } from '@/lib/logger';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegStatic from 'ffmpeg-static';
-import { Readable } from 'node:stream';
 import { eq, inArray } from 'drizzle-orm';
 
 const OUTPUT_SAMPLE_RATE = 44100;
@@ -71,50 +70,78 @@ export async function mixToBuffer(tracks: PreparedTrack[], durationSeconds: numb
   const inputCount = tracks.length;
   const volumePerTrack = Number((1 / Math.max(1, inputCount)).toFixed(3));
 
-  const command = ffmpeg();
-  tracks.forEach((track) => {
-    const stream = Readable.from(track.buffer);
-    const input = command.input(stream);
-    if (track.mimeType.includes('wav')) {
-      input.inputFormat('wav');
+  // fluent-ffmpeg only supports one input stream, so we need to use temp files
+  const fs = await import('fs/promises');
+  const os = await import('os');
+  const path = await import('path');
+  
+  const tempDir = os.tmpdir();
+  const tempFiles: string[] = [];
+  
+  try {
+    // Write all track buffers to temp files
+    for (let i = 0; i < tracks.length; i++) {
+      const track = tracks[i];
+      const ext = track.mimeType.includes('wav') ? '.wav' : '.mp3';
+      const tempPath = path.join(tempDir, `infinitymix-input-${Date.now()}-${i}${ext}`);
+      await fs.writeFile(tempPath, track.buffer);
+      tempFiles.push(tempPath);
     }
-  });
 
-  const filterChains: string[] = [];
-  tracks.forEach((track, idx) => {
-    const ratio = track.bpm && track.bpm > 0 ? targetBpm / track.bpm : 1;
-    const atempo = buildAtempoChain(ratio);
-    const modeFilter = modeFilters(mode, idx);
-    const chain = [atempo, modeFilter, `volume=${volumePerTrack}`].filter(Boolean).join(',');
-    const inputLabel = `${idx}:a`;
-    const outputLabel = `a${idx}`;
-    filterChains.push(`[${inputLabel}]${chain || 'anull'}[${outputLabel}]`);
-  });
+    const command = ffmpeg();
+    
+    // Add all temp files as inputs
+    tempFiles.forEach((filePath) => {
+      command.input(filePath);
+    });
 
-  const inputLabels = tracks.map((_, idx) => `[a${idx}]`).join('');
-  filterChains.push(`${inputLabels}amix=inputs=${inputCount}:duration=shortest:normalize=0[mixed]`);
+    const filterChains: string[] = [];
+    tracks.forEach((track, idx) => {
+      const ratio = track.bpm && track.bpm > 0 ? targetBpm / track.bpm : 1;
+      const atempo = buildAtempoChain(ratio);
+      const modeFilter = modeFilters(mode, idx);
+      const chain = [atempo, modeFilter, `volume=${volumePerTrack}`].filter(Boolean).join(',');
+      const inputLabel = `${idx}:a`;
+      const outputLabel = `a${idx}`;
+      filterChains.push(`[${inputLabel}]${chain || 'anull'}[${outputLabel}]`);
+    });
 
-  command
-    .complexFilter(filterChains, 'mixed')
-    .outputOptions([
-      '-map [mixed]',
-      `-ac ${OUTPUT_CHANNELS}`,
-      `-ar ${OUTPUT_SAMPLE_RATE}`,
-      `-t ${safeDuration}`,
-      '-b:a 192k',
-      '-f mp3',
-    ]);
-  command.output('pipe:1');
+    const inputLabels = tracks.map((_, idx) => `[a${idx}]`).join('');
+    filterChains.push(`${inputLabels}amix=inputs=${inputCount}:duration=shortest:normalize=0[mixed]`);
 
-  const chunks: Buffer[] = [];
+    command
+      .complexFilter(filterChains, 'mixed')
+      .outputOptions([
+        '-map [mixed]',
+        `-ac ${OUTPUT_CHANNELS}`,
+        `-ar ${OUTPUT_SAMPLE_RATE}`,
+        `-t ${safeDuration}`,
+        '-b:a 192k',
+        '-f mp3',
+      ]);
+    command.output('pipe:1');
 
-  return new Promise<Buffer>((resolve, reject) => {
-    command.on('error', reject);
-    const output = command.pipe();
-    output.on('data', chunk => chunks.push(chunk));
-    output.on('end', () => resolve(Buffer.concat(chunks)));
-    output.on('error', reject);
-  });
+    const chunks: Buffer[] = [];
+
+    const result = await new Promise<Buffer>((resolve, reject) => {
+      command.on('error', reject);
+      const output = command.pipe();
+      output.on('data', chunk => chunks.push(chunk));
+      output.on('end', () => resolve(Buffer.concat(chunks)));
+      output.on('error', reject);
+    });
+
+    return result;
+  } finally {
+    // Clean up temp files
+    for (const tempPath of tempFiles) {
+      try {
+        await fs.unlink(tempPath);
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  }
 }
 
 async function loadTracks(inputTrackIds: string[]): Promise<PreparedTrack[]> {

@@ -9,6 +9,7 @@ import Link from 'next/link';
 import { FileUpload } from '@/components/file-upload';
 import { TrackList, Track } from '@/components/track-list';
 import { DurationPicker, DurationPreset } from '@/components/duration-picker';
+import { overallCompatibility } from '@/lib/utils/audio-compat';
 
 export default function CreatePage() {
   const [isAuthenticated] = useState(true); // Auto-logged in for development
@@ -19,6 +20,12 @@ export default function CreatePage() {
   const [durationPreset, setDurationPreset] = useState<DurationPreset>('2_minutes');
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [generationMessage, setGenerationMessage] = useState<string | null>(null);
+
+  const scoreStyles = (score: number) => {
+    if (score >= 0.8) return 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300';
+    if (score >= 0.6) return 'bg-amber-500/10 border-amber-500/30 text-amber-200';
+    return 'bg-red-500/10 border-red-500/30 text-red-200';
+  };
 
   const loadTracks = useCallback(async () => {
     try {
@@ -142,6 +149,32 @@ export default function CreatePage() {
 
   const completedTracks = useMemo(() => uploadedTracks.filter((t) => t.analysis_status === 'completed'), [uploadedTracks]);
 
+  const anchorTrack = useMemo(() => {
+    if (selectedTrackIds.length === 0) return completedTracks[0] ?? null;
+    return completedTracks.find((t) => selectedTrackIds.includes(t.id)) ?? completedTracks[0] ?? null;
+  }, [completedTracks, selectedTrackIds]);
+
+  const compatibilityHints = useMemo(() => {
+    if (!anchorTrack) return [] as Array<{ id: string; name: string; score: number; bpmDiff: number | null; keyOk: boolean }>;
+    return completedTracks
+      .filter((t) => t.id !== anchorTrack.id)
+      .map((t) => {
+        const { score, bpmDiff, keyOk } = overallCompatibility(anchorTrack.bpm, anchorTrack.camelot_key ?? anchorTrack.musical_key, {
+          bpm: t.bpm,
+          camelotKey: t.camelot_key ?? t.musical_key,
+        });
+        return {
+          id: t.id,
+          name: t.original_filename,
+          score,
+          bpmDiff: bpmDiff ?? null,
+          keyOk,
+        };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 4);
+  }, [anchorTrack, completedTracks]);
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -226,6 +259,38 @@ export default function CreatePage() {
                 value={durationPreset} 
                 onChange={setDurationPreset} 
             />
+
+            {/* Compatibility helper */}
+            <Card className="bg-card/60 backdrop-blur-xl border-white/10">
+              <CardContent className="pt-6 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-gray-400">Compatibility suggestions</p>
+                  <span className="text-xs text-gray-500">Anchor: {anchorTrack ? anchorTrack.original_filename : '—'}</span>
+                </div>
+                {(!anchorTrack || compatibilityHints.length === 0) && (
+                  <p className="text-sm text-gray-500">Select or upload analyzed tracks to see best pairings.</p>
+                )}
+                {compatibilityHints.length > 0 && (
+                  <div className="space-y-2">
+                    {compatibilityHints.map((item) => (
+                      <div key={item.id} className="flex items-center justify-between rounded-lg border border-white/5 bg-black/20 px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="text-sm text-white truncate">{item.name}</p>
+                          <div className="text-xs text-gray-500 flex items-center gap-2 mt-1">
+                            <span className={`px-2 py-1 rounded-full text-[11px] font-medium ${scoreStyles(item.score)}`}>
+                              Score {(item.score * 100).toFixed(0)}%
+                            </span>
+                            {item.bpmDiff !== null && <span className="text-gray-400">Δ {Math.round(item.bpmDiff)} BPM</span>}
+                            <span className={item.keyOk ? 'text-emerald-300' : 'text-gray-500'}>{item.keyOk ? 'Key match' : 'Key stretch'}</span>
+                          </div>
+                        </div>
+                        <div className="text-xs text-primary/80">Suggested</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
             <Card className="bg-card/60 backdrop-blur-xl">
               <CardContent className="pt-6 space-y-4">

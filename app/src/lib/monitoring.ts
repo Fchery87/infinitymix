@@ -2,7 +2,7 @@
 // This file configures Sentry for production error monitoring without hard dependency during build
 
 const SENTRY_DSN = process.env.SENTRY_DSN;
-const shouldInitSentry = process.env.NODE_ENV === 'production' && Boolean(SENTRY_DSN);
+const shouldInitSentry = Boolean(SENTRY_DSN);
 let sentryPromise: Promise<typeof import('@sentry/nextjs')> | null = null;
 
 const loadSentry = async () => {
@@ -46,13 +46,13 @@ if (shouldInitSentry) {
           return event;
         },
       });
-      console.log('🔍 Sentry initialized for production monitoring');
+      console.log('🔍 Sentry initialized for monitoring');
     })
     .catch((error) => {
       console.error('Failed to initialize Sentry', error);
     });
 } else {
-  console.log('🚰 Sentry disabled (development or no DSN configured)');
+  console.log('🚰 Sentry disabled (no DSN configured)');
 }
 
 // Export a wrapper for custom error reporting

@@ -1,3 +1,31 @@
+const r2Endpoint = process.env.R2_ENDPOINT ? new URL(process.env.R2_ENDPOINT).origin : null;
+const r2PublicBase = process.env.R2_PUBLIC_BASE ? new URL(process.env.R2_PUBLIC_BASE).origin : null;
+
+const connectSources = ["'self'", 'https:'];
+const mediaSources = ["'self'", 'blob:'];
+
+if (r2Endpoint) {
+  connectSources.push(r2Endpoint);
+  mediaSources.push(r2Endpoint);
+}
+if (r2PublicBase) {
+  connectSources.push(r2PublicBase);
+  mediaSources.push(r2PublicBase);
+}
+
+const csp = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: https:",
+  "font-src 'self' data:",
+  `connect-src ${connectSources.join(' ')}`,
+  `media-src ${mediaSources.join(' ')}`,
+  "object-src 'none'",
+  "base-uri 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Production optimizations
@@ -36,7 +64,7 @@ const nextConfig = {
           },
           {
             key: 'Content-Security-Policy',
-            value: "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https:; media-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none';",
+            value: csp,
           },
           {
             key: 'Strict-Transport-Security',

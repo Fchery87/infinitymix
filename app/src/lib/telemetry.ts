@@ -1,4 +1,5 @@
 import { reportError, reportPerformance } from '@/lib/monitoring';
+import { log } from '@/lib/logger';
 
 type TelemetryLevel = 'info' | 'warn' | 'error';
 
@@ -10,6 +11,7 @@ type TelemetryEvent = {
 
 export const logTelemetry = ({ name, level = 'info', properties }: TelemetryEvent) => {
   const message = `[telemetry] ${name}`;
+  log(level, message, properties);
   if (level === 'error') {
     console.error(message, properties ?? {});
   } else if (level === 'warn') {

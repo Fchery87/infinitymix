@@ -18,6 +18,19 @@ export const audioUploadSchema = z.object({
   files: z.array(z.instanceof(File)).min(1, 'At least one file is required').max(5, 'Maximum 5 files allowed'),
 });
 
+export const presignUploadSchema = z.object({
+  filename: z.string().min(1).max(255),
+  contentType: z.string().min(1),
+  size: z.number().int().positive().max(50 * 1024 * 1024),
+});
+
+export const completeUploadSchema = z.object({
+  key: z.string().min(1),
+  filename: z.string().min(1).max(255),
+  contentType: z.string().min(1),
+  size: z.number().int().positive().max(50 * 1024 * 1024),
+});
+
 export const mashupGenerateSchema = z.object({
   inputFileIds: z.array(z.string().uuid()).min(2, 'At least 2 files are required').max(5, 'Maximum 5 files allowed'),
   durationPreset: z.enum(['1_minute', '2_minutes', '3_minutes']),

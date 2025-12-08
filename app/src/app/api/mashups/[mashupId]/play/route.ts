@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { mashups } from '@/lib/db/schema';
 import { and, eq, sql } from 'drizzle-orm';
 import { logTelemetry } from '@/lib/telemetry';
+import { log } from '@/lib/logger';
 
 export async function POST(
   request: NextRequest,
@@ -56,6 +57,7 @@ export async function POST(
         playbackCount: updated.playbackCount,
       },
     });
+    log('info', 'mashup.play', { mashupId, userId: session.user.id, playbackCount: updated.playbackCount });
 
     return NextResponse.json({ playback_count: updated.playbackCount });
   } catch (error) {

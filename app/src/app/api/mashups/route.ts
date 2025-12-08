@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth/config';
 import { db } from '@/lib/db';
 import { mashups } from '@/lib/db/schema';
+import { log } from '@/lib/logger';
 import { eq, desc, count } from 'drizzle-orm';
 
 export async function GET(request: NextRequest) {
@@ -18,9 +19,11 @@ export async function GET(request: NextRequest) {
     }
 
     const { searchParams } = new URL(request.url);
-    const page = parseInt(searchParams.get('page') || '1');
-    const limit = parseInt(searchParams.get('limit') || '10');
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
+    const limit = Math.min(50, Math.max(1, parseInt(searchParams.get('limit') || '10', 10)));
     const offset = (page - 1) * limit;
+
+    const cacheControl = 'private, max-age=30';
 
     // Get total count
     const [totalCount] = await db
@@ -64,14 +67,17 @@ export async function GET(request: NextRequest) {
       updated_at: mashup.updatedAt,
     }));
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       page,
       limit,
       total: totalCount.count,
       data: formattedMashups,
     });
+    response.headers.set('Cache-Control', cacheControl);
+    return response;
   } catch (error) {
     console.error('List mashups error:', error);
+    log('error', 'mashups.list.failed', { error: (error as Error)?.message });
     return NextResponse.json(
       { error: 'Failed to retrieve mashups' },
       { status: 500 }

@@ -15,7 +15,7 @@ type RateLimiter = ((request: NextRequest) => NextResponse | null) & {
 type Handler<TArgs extends unknown[] = unknown[]> = (
   request: NextRequest,
   ...args: TArgs
-) => Promise<NextResponse | null | undefined> | NextResponse | null | undefined;
+) => Promise<NextResponse> | NextResponse;
 
 // Simple in-memory rate limiter for development
 // In production, you'd want to use Redis or a database

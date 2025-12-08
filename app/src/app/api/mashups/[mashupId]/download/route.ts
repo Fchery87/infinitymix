@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import { mashups } from '@/lib/db/schema';
 import { getStorage } from '@/lib/storage';
 import { logTelemetry } from '@/lib/telemetry';
+import { log } from '@/lib/logger';
 import { eq, and, sql } from 'drizzle-orm';
 
 export async function GET(
@@ -109,6 +110,12 @@ export async function GET(
         streamOnly,
         outputFormat: mashup.outputFormat,
       },
+    });
+    log('info', 'mashup.download', {
+      mashupId,
+      userId: session.user.id,
+      streamOnly,
+      outputFormat: mashup.outputFormat,
     });
 
     const buffer = Buffer.from(fileBuffer);

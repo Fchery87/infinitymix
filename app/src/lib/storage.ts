@@ -1,5 +1,6 @@
 // Storage service with R2 (S3-compatible) primary and mock fallback
 import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 // Mock Storage Service for development/testing
 class MockStorageService {
@@ -31,19 +32,28 @@ class MockStorageService {
 
 const mockStorage: StorageService = {
   uploadFile: (buffer, filename, mimeType) => MockStorageService.uploadFile(buffer, filename, mimeType),
-  getDownloadUrl: (key) => MockStorageService.getDownloadUrl(key),
+  getDownloadUrl: async (key) => MockStorageService.getDownloadUrl(key),
   deleteFile: (key) => MockStorageService.deleteFile(key),
   testConnection: () => MockStorageService.testConnection(),
   getFile: (url) => MockStorageService.getFile(url),
+  createPresignedUpload: async () => {
+    throw new Error('Presigned uploads are not available in mock storage');
+  },
 };
 
 // Dynamic import for AWS S3 service
 type StorageService = {
   uploadFile: (buffer: Buffer, filename: string, mimeType: string) => Promise<string>;
-  getDownloadUrl: (key: string) => string;
+  getDownloadUrl: (key: string) => Promise<string>;
   deleteFile: (key: string) => Promise<void>;
   testConnection: () => Promise<boolean>;
   getFile?: (url: string) => Promise<{ buffer: Buffer; mimeType: string } | null>;
+  createPresignedUpload?: (params: { key: string; contentType: string; contentLength?: number }) => Promise<{
+    uploadUrl: string;
+    headers: Record<string, string>;
+    key: string;
+    storageLocator: string;
+  }>;
 };
 
 let Storage: StorageService;
@@ -68,11 +78,22 @@ async function initializeStorage(): Promise<void> {
       });
 
       const bucket = process.env.R2_BUCKET as string;
-      const publicBase = process.env.R2_PUBLIC_BASE;
+      const publicBase = process.env.R2_PUBLIC_BASE?.replace(/\/$/, '');
+
+      const extractKey = (value: string) => {
+        let key = value;
+        if (publicBase && key.startsWith(publicBase)) {
+          key = key.slice(publicBase.length);
+        }
+        key = key.replace(/^r2:\/\//, '');
+        key = key.replace(/^https?:\/\//, '').replace(/^[^/]+\//, '');
+        key = key.replace(/^\//, '');
+        return key;
+      };
 
       Storage = {
         uploadFile: async (buffer, filename, mimeType) => {
-          const key = `${Date.now()}-${filename}`;
+          const key = filename;
           await client.send(
             new PutObjectCommand({
               Bucket: bucket,
@@ -81,15 +102,29 @@ async function initializeStorage(): Promise<void> {
               ContentType: mimeType,
             })
           );
-          return publicBase ? `${publicBase.replace(/\/$/, '')}/${key}` : key;
+          return publicBase ? `${publicBase}/${key}` : `r2://${key}`;
         },
-        getDownloadUrl: (key) => {
-          if (publicBase) return `${publicBase.replace(/\/$/, '')}/${key}`;
-          // fallback signed URL (60s)
-          return key;
+        getDownloadUrl: async (key) => {
+          if (publicBase) return `${publicBase}/${key}`;
+          const objectKey = extractKey(key);
+          return getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: objectKey }), { expiresIn: 900 });
+        },
+        createPresignedUpload: async ({ key, contentType }) => {
+          const uploadUrl = await getSignedUrl(
+            client,
+            new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: contentType }),
+            { expiresIn: 900 }
+          );
+          const storageLocator = publicBase ? `${publicBase}/${key}` : `r2://${key}`;
+          return {
+            uploadUrl,
+            headers: { 'Content-Type': contentType },
+            key,
+            storageLocator,
+          };
         },
         deleteFile: async (key) => {
-          const objectKey = key.replace(`${publicBase ?? ''}`.replace(/\/$/, '') + '/', '');
+          const objectKey = extractKey(key);
           await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: objectKey }));
         },
         testConnection: async () => {
@@ -109,11 +144,7 @@ async function initializeStorage(): Promise<void> {
           }
         },
         getFile: async (url) => {
-          const objectKey = url
-            .replace(publicBase ?? '', '')
-            .replace(/^https?:\/\//, '')
-            .replace(/^[^/]+\//, '')
-            .replace(/^\//, '');
+          const objectKey = extractKey(url);
           try {
             const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: objectKey }));
             // @ts-expect-error: sdk stream typing

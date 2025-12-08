@@ -85,8 +85,14 @@ async function initializeStorage(): Promise<void> {
         if (publicBase && key.startsWith(publicBase)) {
           key = key.slice(publicBase.length);
         }
-        key = key.replace(/^r2:\/\//, '');
-        key = key.replace(/^https?:\/\//, '').replace(/^[^/]+\//, '');
+        // Handle r2:// URLs - just strip the protocol
+        if (key.startsWith('r2://')) {
+          key = key.replace(/^r2:\/\//, '');
+        } 
+        // Handle https:// URLs - strip protocol AND domain
+        else if (key.startsWith('http://') || key.startsWith('https://')) {
+          key = key.replace(/^https?:\/\//, '').replace(/^[^/]+\//, '');
+        }
         key = key.replace(/^\//, '');
         return key;
       };

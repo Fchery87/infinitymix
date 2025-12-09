@@ -7,6 +7,11 @@ import { eq, and } from 'drizzle-orm';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegStatic from 'ffmpeg-static';
 import { Readable } from 'node:stream';
+import { 
+  isHuggingFaceAvailable, 
+  separateWithHuggingFace, 
+  getHuggingFaceStatus 
+} from './huggingface-stems';
 
 type StemType = (typeof stemTypeEnum.enumValues)[number];
 type StemQuality = (typeof stemQualityEnum.enumValues)[number];
@@ -103,25 +108,61 @@ async function renderStemWithFFmpeg(buffer: Buffer, mimeType: string, stemType: 
 }
 
 async function convertWavToMp3(wavBuffer: Buffer, quality: StemQuality): Promise<Buffer> {
+  log('info', 'convertWavToMp3.start', { 
+    inputSize: wavBuffer.length, 
+    quality,
+    hasFfmpeg: !!ffmpegStatic 
+  });
+
   if (!ffmpegStatic) {
+    log('warn', 'convertWavToMp3.noFfmpeg', { returning: 'original buffer' });
     return wavBuffer;
   }
 
-  const command = ffmpeg();
-  command.input(Readable.from(wavBuffer)).inputFormat('wav');
-  command.format('mp3');
-  const bitrate = quality === 'hifi' ? '256k' : '192k';
-  command.outputOptions(['-ac 2', '-ar 44100', `-b:a ${bitrate}`]);
-  command.output('pipe:1');
+  if (wavBuffer.length === 0) {
+    log('error', 'convertWavToMp3.emptyInput', {});
+    return wavBuffer;
+  }
 
-  const chunks: Buffer[] = [];
-  return new Promise<Buffer>((resolve, reject) => {
-    command.on('error', reject);
-    const stream = command.pipe();
-    stream.on('data', chunk => chunks.push(chunk));
-    stream.on('end', () => resolve(Buffer.concat(chunks)));
-    stream.on('error', reject);
-  });
+  try {
+    const command = ffmpeg();
+    command.input(Readable.from(wavBuffer)).inputFormat('wav');
+    command.format('mp3');
+    const bitrate = quality === 'hifi' ? '256k' : '192k';
+    command.outputOptions(['-ac 2', '-ar 44100', `-b:a ${bitrate}`]);
+    command.output('pipe:1');
+
+    const chunks: Buffer[] = [];
+    const result = await new Promise<Buffer>((resolve, reject) => {
+      command.on('error', (err) => {
+        log('error', 'convertWavToMp3.ffmpegError', { error: err.message });
+        reject(err);
+      });
+      const stream = command.pipe();
+      stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+      stream.on('end', () => {
+        const output = Buffer.concat(chunks);
+        log('info', 'convertWavToMp3.complete', { outputSize: output.length });
+        resolve(output);
+      });
+      stream.on('error', (err) => {
+        log('error', 'convertWavToMp3.streamError', { error: err.message });
+        reject(err);
+      });
+    });
+
+    // If conversion resulted in empty buffer, return original
+    if (result.length === 0) {
+      log('warn', 'convertWavToMp3.emptyOutput', { returning: 'original buffer' });
+      return wavBuffer;
+    }
+
+    return result;
+  } catch (error) {
+    log('error', 'convertWavToMp3.failed', { error: (error as Error).message });
+    // Return original buffer on failure
+    return wavBuffer;
+  }
 }
 
 async function upsertStemRecord(trackId: string, stemType: StemType, values: Partial<StemRecord>) {
@@ -191,7 +232,8 @@ export async function separateStems(trackId: string, quality: StemQuality = 'dra
 
   const results: StemRecord[] = [];
   const useDemucs = await isDemucsAvailable();
-  const engine = useDemucs ? 'demucs' : (quality === 'hifi' ? 'ffmpeg-hifi' : 'ffmpeg');
+  const useHuggingFace = !useDemucs && await isHuggingFaceAvailable();
+  const engine = useDemucs ? 'demucs' : (useHuggingFace ? 'huggingface' : (quality === 'hifi' ? 'ffmpeg-hifi' : 'ffmpeg'));
 
   log('info', 'stems.separation.start', { trackId, engine, quality });
 
@@ -242,11 +284,71 @@ export async function separateStems(trackId: string, quality: StemQuality = 'dra
     } catch (error) {
       handleAsyncError(error as Error, 'demucs.separation');
       log('warn', 'stems.demucs.fallback', { trackId, error: (error as Error).message });
+      // Fall through to HuggingFace or FFmpeg fallback below
+    }
+  }
+
+  // HuggingFace fallback (if Demucs unavailable or failed)
+  if (results.length === 0 && useHuggingFace) {
+    try {
+      // Mark all stems as processing
+      for (const stemType of STEM_TYPES) {
+        await upsertStemRecord(trackId, stemType, { status: 'processing', quality });
+      }
+
+      log('info', 'stems.huggingface.start', { trackId });
+      const stems = await separateWithHuggingFace(fetched.buffer, track.originalFilename);
+      
+      for (const stemType of STEM_TYPES) {
+        const stemBuffer = stems.get(stemType);
+        if (!stemBuffer) {
+          log('warn', 'stems.huggingface.missing', { trackId, stemType });
+          continue;
+        }
+
+        try {
+          // HuggingFace returns WAV files - upload directly (skip conversion due to ffmpeg issues)
+          log('info', 'stems.huggingface.processing', { 
+            trackId, 
+            stemType, 
+            bufferSize: stemBuffer.length 
+          });
+          // Save as WAV since FFmpeg conversion has issues on some systems
+          const key = `${trackId}/stems/${stemType}.wav`;
+          const url = await storage.uploadFile(stemBuffer, key, 'audio/wav');
+          log('info', 'stems.huggingface.uploaded', { trackId, stemType, url });
+
+          const [saved] = await db
+            .update(trackStems)
+            .set({ 
+              storageUrl: url, 
+              status: 'completed', 
+              quality, 
+              engine: 'huggingface', 
+              updatedAt: new Date() 
+            })
+            .where(and(eq(trackStems.uploadedTrackId, trackId), eq(trackStems.stemType, stemType)))
+            .returning();
+
+          if (saved) results.push(saved);
+        } catch (error) {
+          handleAsyncError(error as Error, `huggingface.stem:${stemType}`);
+          await db
+            .update(trackStems)
+            .set({ status: 'failed', updatedAt: new Date() })
+            .where(and(eq(trackStems.uploadedTrackId, trackId), eq(trackStems.stemType, stemType)));
+        }
+      }
+
+      log('info', 'stems.huggingface.complete', { trackId, stemsProcessed: results.length });
+    } catch (error) {
+      handleAsyncError(error as Error, 'huggingface.separation');
+      log('warn', 'stems.huggingface.fallback', { trackId, error: (error as Error).message });
       // Fall through to FFmpeg fallback below
     }
   }
 
-  // FFmpeg fallback (if Demucs unavailable or failed)
+  // FFmpeg fallback (if Demucs and HuggingFace unavailable or failed)
   if (results.length === 0) {
     for (const stemType of STEM_TYPES) {
       const started = await upsertStemRecord(trackId, stemType, { status: 'processing', quality });
@@ -318,4 +420,22 @@ export async function getDemucsStatus(): Promise<{ available: boolean; device?: 
     // Demucs not available
   }
   return { available: false };
+}
+
+export async function getStemSeparationStatus(): Promise<{
+  demucs: { available: boolean; device?: string };
+  huggingface: { available: boolean; space: string };
+  fallback: string;
+}> {
+  const demucs = await getDemucsStatus();
+  const huggingface = await getHuggingFaceStatus();
+  
+  let fallback = 'ffmpeg';
+  if (demucs.available) {
+    fallback = 'demucs';
+  } else if (huggingface.available) {
+    fallback = 'huggingface';
+  }
+
+  return { demucs, huggingface, fallback };
 }

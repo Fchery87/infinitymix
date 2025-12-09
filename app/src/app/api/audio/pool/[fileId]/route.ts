@@ -6,11 +6,10 @@ import { eq, and } from 'drizzle-orm';
 
 export async function DELETE(
   request: NextRequest,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  context: any
+  { params }: { params: Promise<{ fileId: string }> }
 ) {
   try {
-    const { params } = context || {};
+    const { fileId } = await params;
     const user = await getSessionUser(request);
     if (!user) {
       return NextResponse.json(
@@ -18,8 +17,6 @@ export async function DELETE(
         { status: 401 }
       );
     }
-
-    const fileId = params?.fileId;
 
     if (!fileId) {
       return NextResponse.json(

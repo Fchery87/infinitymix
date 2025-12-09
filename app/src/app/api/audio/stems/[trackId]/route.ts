@@ -76,7 +76,25 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     }
 
     const stems = await getStemsForTrack(trackId);
-    return NextResponse.json({ stems });
+
+    // Generate playable URLs using the stream proxy endpoint
+    const stemsWithUrls = stems.map((stem) => {
+      let playUrl: string | undefined;
+      if (stem.storageUrl && stem.status === 'completed') {
+        // Use the proxy endpoint to avoid CORS issues
+        playUrl = `/api/audio/stream/${stem.id}`;
+      }
+      return {
+        id: stem.id,
+        stemType: stem.stemType,
+        status: stem.status,
+        quality: stem.quality,
+        engine: stem.engine,
+        playUrl,
+      };
+    });
+
+    return NextResponse.json({ stems: stemsWithUrls });
   } catch (error) {
     if (error instanceof AuthenticationError) {
       return NextResponse.json({ error: error.message, code: 'AUTHENTICATION_ERROR' }, { status: 401 });

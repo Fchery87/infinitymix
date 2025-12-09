@@ -1,9 +1,11 @@
 'use client';
 
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { FileAudio, Trash2 } from 'lucide-react';
+import { FileAudio, Trash2, Scissors, Loader2, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils/helpers';
+import { StemPlayer } from '@/components/stem-player';
 
 export interface Track {
   id: string;
@@ -13,9 +15,10 @@ export interface Track {
   musical_key: string | null;
   camelot_key?: string | null;
   beat_grid?: number[];
-   waveform_lite?: number[];
-   drop_moments?: number[];
-   structure?: Array<{ label: string; start: number; end: number; confidence: number }>;
+  waveform_lite?: number[];
+  drop_moments?: number[];
+  structure?: Array<{ label: string; start: number; end: number; confidence: number }>;
+  has_stems?: boolean;
   created_at: string;
 }
 
@@ -55,10 +58,45 @@ function Waveform({ beatGrid, waveformLite }: { beatGrid?: number[]; waveformLit
 interface TrackListProps {
   tracks: Track[];
   onRemoveTrack?: (id: string) => void;
+  onStemsUpdated?: () => void;
   className?: string;
 }
 
-export function TrackList({ tracks, onRemoveTrack, className }: TrackListProps) {
+export function TrackList({ tracks, onRemoveTrack, onStemsUpdated, className }: TrackListProps) {
+  const [separatingIds, setSeparatingIds] = useState<Set<string>>(new Set());
+
+  const handleSeparateStems = async (trackId: string) => {
+    setSeparatingIds((prev) => new Set(prev).add(trackId));
+    
+    try {
+      const response = await fetch(`/api/audio/stems/${trackId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quality: 'draft' }),
+      });
+      
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error || 'Failed to start stem separation');
+      }
+      
+      // Trigger refresh to show updated status
+      onStemsUpdated?.();
+    } catch (error) {
+      console.error('Stem separation error:', error);
+      alert(error instanceof Error ? error.message : 'Failed to separate stems');
+    } finally {
+      // Keep showing spinner until parent refreshes and shows has_stems
+      setTimeout(() => {
+        setSeparatingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(trackId);
+          return next;
+        });
+      }, 2000);
+    }
+  };
+
   return (
     <AnimatePresence>
       {tracks.length > 0 && (
@@ -116,7 +154,33 @@ export function TrackList({ tracks, onRemoveTrack, className }: TrackListProps) 
                     </div>
                   </div>
 
-                  <div className="flex items-center space-x-4">
+                  <div className="flex items-center space-x-3">
+                    {/* Stems Status/Button */}
+                    {track.analysis_status === 'completed' && (
+                      track.has_stems ? (
+                        <div className="px-3 py-1 rounded-full bg-purple-500/10 text-purple-400 text-xs font-medium border border-purple-500/20 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" />
+                          Stems Ready
+                        </div>
+                      ) : separatingIds.has(track.id) ? (
+                        <div className="px-3 py-1 rounded-full bg-purple-500/10 text-purple-400 text-xs font-medium border border-purple-500/20 flex items-center gap-1">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          Separating...
+                        </div>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleSeparateStems(track.id)}
+                          className="h-7 px-3 text-xs text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 border border-purple-500/20"
+                        >
+                          <Scissors className="w-3 h-3 mr-1" />
+                          Separate Stems
+                        </Button>
+                      )
+                    )}
+                    
+                    {/* Analysis Status */}
                     {track.analysis_status === 'completed' ? (
                       <div className="px-3 py-1 rounded-full bg-green-500/10 text-green-500 text-xs font-medium border border-green-500/20">
                         Ready
@@ -131,6 +195,8 @@ export function TrackList({ tracks, onRemoveTrack, className }: TrackListProps) 
                         Processing
                       </div>
                     )}
+                    
+                    {/* Delete Button */}
                     {onRemoveTrack && (
                       <Button 
                           variant="ghost" 
@@ -159,6 +225,14 @@ export function TrackList({ tracks, onRemoveTrack, className }: TrackListProps) 
                 {track.analysis_status === 'completed' && <Waveform beatGrid={track.beat_grid} waveformLite={track.waveform_lite} />}
                 {track.analysis_status === 'completed' && track.drop_moments && track.drop_moments.length > 0 && (
                   <div className="mt-2 text-[11px] text-primary/80">Drops near {track.drop_moments.slice(0, 3).map((t) => `${Math.round(t)}s`).join(', ')}</div>
+                )}
+
+                {/* Stem Player - shown when stems are ready */}
+                {track.has_stems && (
+                  <StemPlayer 
+                    trackId={track.id} 
+                    trackName={track.original_filename}
+                  />
                 )}
               </motion.div>
             ))}

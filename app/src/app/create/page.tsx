@@ -461,7 +461,8 @@ export default function CreatePage() {
         {/* Track List using reusable component */}
         <TrackList 
             tracks={uploadedTracks} 
-            onRemoveTrack={handleRemoveTrack} 
+            onRemoveTrack={handleRemoveTrack}
+            onStemsUpdated={loadTracks}
         />
         
       </main>

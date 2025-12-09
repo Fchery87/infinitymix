@@ -501,6 +501,8 @@ export async function getTrackInfoForMixing(trackId: string): Promise<{
   camelotKey: string | null;
   durationSeconds: number | null;
   beatGrid: number[] | null;
+  dropMoments: number[] | null;
+  structure: Array<{ label: string; start: number; end: number; confidence: number }> | null;
 } | null> {
   const tracks = await db
     .select({
@@ -509,6 +511,8 @@ export async function getTrackInfoForMixing(trackId: string): Promise<{
       camelotKey: uploadedTracks.camelotKey,
       durationSeconds: uploadedTracks.durationSeconds,
       beatGrid: uploadedTracks.beatGrid,
+      dropMoments: uploadedTracks.dropMoments,
+      structure: uploadedTracks.structure,
     })
     .from(uploadedTracks)
     .where(eq(uploadedTracks.id, trackId));
@@ -522,5 +526,7 @@ export async function getTrackInfoForMixing(trackId: string): Promise<{
     camelotKey: t.camelotKey,
     durationSeconds: t.durationSeconds ? Number(t.durationSeconds) : null,
     beatGrid: t.beatGrid ?? null,
+    dropMoments: t.dropMoments ?? null,
+    structure: t.structure ?? null,
   };
 }

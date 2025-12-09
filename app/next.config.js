@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 const path = require('path');
 
 const r2Endpoint = process.env.R2_ENDPOINT ? new URL(process.env.R2_ENDPOINT).origin : null;

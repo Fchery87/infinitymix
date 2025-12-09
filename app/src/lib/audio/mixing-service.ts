@@ -8,13 +8,22 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegStatic from 'ffmpeg-static';
 import { eq, inArray } from 'drizzle-orm';
 import { getStemBuffer, getTrackInfoForMixing } from './stems-service';
-import { calculatePitchShiftSemitones, semitonesToPitchRatio, calculateTempoRatio, camelotCompatible } from '@/lib/utils/audio-compat';
+import { calculatePitchShiftSemitones, semitonesToPitchRatio, calculateTempoRatio, camelotCompatible, calculateBeatAlignment, BeatAlignMode } from '@/lib/utils/audio-compat';
 
 const OUTPUT_SAMPLE_RATE = 44100;
 const OUTPUT_CHANNELS = 2;
 const OUTPUT_FORMAT = 'mp3';
 const DEFAULT_TARGET_BPM = 120;
 type MixMode = 'standard' | 'vocals_over_instrumental' | 'drum_swap';
+
+export type TransitionStyle = 'smooth' | 'drop' | 'cut' | 'energy';
+
+const CROSSFADE_PRESETS: Record<TransitionStyle, { duration: number; curve1: string; curve2: string }> = {
+  smooth: { duration: 4, curve1: 'tri', curve2: 'tri' },
+  drop: { duration: 0.5, curve1: 'exp', curve2: 'log' },
+  cut: { duration: 0, curve1: 'nofade', curve2: 'nofade' },
+  energy: { duration: 2, curve1: 'qsin', curve2: 'qsin' },
+};
 
 // Stem-based mashup configuration
 export type StemMashupConfig = {
@@ -26,6 +35,14 @@ export type StemMashupConfig = {
   vocalVolume?: number;        // Vocal volume 0-1 (default 0.75)
   instrumentalVolume?: number; // Instrumental volume 0-1 (default 0.85)
   durationSeconds?: number;    // Output duration
+  beatAlign?: boolean;         // Enable beat grid alignment (default true)
+  beatAlignMode?: BeatAlignMode; // downbeat or nearest beat
+  crossfade?: {
+    enabled: boolean;
+    duration?: number;
+    style?: TransitionStyle;
+    transitionAt?: 'start' | 'drop' | 'chorus' | 'auto';
+  };
 };
 
 if (ffmpegStatic) {
@@ -322,6 +339,12 @@ export async function mixStemMashup(config: StemMashupConfig): Promise<Buffer> {
   // Determine target BPM (default to instrumental track BPM)
   const targetBpm = config.targetBpm ?? instTrack.bpm ?? DEFAULT_TARGET_BPM;
 
+  // Adjust beat grids for tempo changes
+  const vocalTempoRatio = calculateTempoRatio(vocalTrack.bpm, targetBpm);
+  const instTempoRatio = calculateTempoRatio(instTrack.bpm, targetBpm);
+  const adjustedVocalBeatGrid = (vocalTrack.beatGrid ?? []).map((t) => t / (vocalTempoRatio || 1));
+  const adjustedInstBeatGrid = (instTrack.beatGrid ?? []).map((t) => t / (instTempoRatio || 1));
+
   // Calculate pitch shift for key matching
   let pitchShiftSemitones = config.pitchShiftSemitones ?? 0;
   if (autoKeyMatch && pitchShiftSemitones === 0 && vocalTrack.camelotKey && instTrack.camelotKey) {
@@ -335,10 +358,6 @@ export async function mixStemMashup(config: StemMashupConfig): Promise<Buffer> {
       });
     }
   }
-
-  // Calculate tempo ratios
-  const vocalTempoRatio = calculateTempoRatio(vocalTrack.bpm, targetBpm);
-  const instTempoRatio = calculateTempoRatio(instTrack.bpm, targetBpm);
 
   // Volume levels
   const vocalVolume = config.vocalVolume ?? 0.75;
@@ -405,14 +424,58 @@ export async function mixStemMashup(config: StemMashupConfig): Promise<Buffer> {
       instChain = instAtempo;
     }
     
+    // Beat alignment
+    if (config.beatAlign !== false) {
+      const beatOffset = calculateBeatAlignment(
+        adjustedVocalBeatGrid,
+        adjustedInstBeatGrid,
+        targetBpm,
+        config.beatAlignMode ?? 'downbeat'
+      );
+      if (beatOffset !== 0) {
+        const delayMs = Math.abs(Math.round(beatOffset * 1000));
+        if (beatOffset > 0) {
+          vocalChain = vocalChain ? `adelay=${delayMs}|${delayMs},${vocalChain}` : `adelay=${delayMs}|${delayMs}`;
+        } else {
+          instChain = instChain ? `adelay=${delayMs}|${delayMs},${instChain}` : `adelay=${delayMs}|${delayMs}`;
+        }
+      }
+    }
+
     // Instrumental EQ: slight low-pass to leave room for vocals
     instChain = instChain 
       ? `${instChain},lowpass=f=14000,volume=${instVolume}` 
       : `lowpass=f=14000,volume=${instVolume}`;
     filterChains.push(`[1:a]${instChain}[inst]`);
 
-    // Mix vocals and instrumental
-    filterChains.push(`[vocals][inst]amix=inputs=2:duration=shortest:normalize=0[premix]`);
+    const crossfadeConfig = config.crossfade;
+    const style: TransitionStyle = crossfadeConfig?.style ?? 'smooth';
+    const preset = CROSSFADE_PRESETS[style] ?? CROSSFADE_PRESETS.smooth;
+    const fadeDuration = Math.max(0, crossfadeConfig?.duration ?? preset.duration);
+    const crossfadeEnabled = !!crossfadeConfig?.enabled && fadeDuration > 0 && duration > 0;
+
+    if (crossfadeEnabled) {
+      const fadeLen = Math.min(fadeDuration, duration / 2); // Ensure fade doesn't exceed half duration
+      
+      // Split vocals and inst streams for multiple uses (FFmpeg labels can only be consumed once)
+      filterChains.push(`[vocals]asplit=2[vocals_a][vocals_b]`);
+      filterChains.push(`[inst]asplit=2[inst_a][inst_b]`);
+      
+      // Intro crossfade section
+      filterChains.push(`[vocals_a]atrim=end=${fadeLen},asetpts=PTS-STARTPTS[v0]`);
+      filterChains.push(`[inst_a]atrim=end=${fadeLen},asetpts=PTS-STARTPTS[i0]`);
+      filterChains.push(`[v0][i0]acrossfade=d=${fadeLen}:c1=${preset.curve1}:c2=${preset.curve2}[intro]`);
+      
+      // Rest of the mix (after crossfade)
+      filterChains.push(`[vocals_b]atrim=start=${fadeLen},asetpts=PTS-STARTPTS[v1]`);
+      filterChains.push(`[inst_b]atrim=start=${fadeLen},asetpts=PTS-STARTPTS[i1]`);
+      filterChains.push(`[v1][i1]amix=inputs=2:duration=shortest:normalize=0[restmix]`);
+      
+      // Concatenate intro crossfade with rest of mix
+      filterChains.push(`[intro][restmix]concat=n=2:v=0:a=1[premix]`);
+    } else {
+      filterChains.push(`[vocals][inst]amix=inputs=2:duration=shortest:normalize=0[premix]`);
+    }
 
     // Final limiter to prevent clipping
     filterChains.push(`[premix]alimiter=level_in=1:level_out=0.95[out]`);
@@ -460,6 +523,11 @@ export async function mixStemMashup(config: StemMashupConfig): Promise<Buffer> {
     });
 
     console.log(`✅ Stem mashup complete: ${result.length} bytes`);
+    
+    if (result.length === 0) {
+      throw new Error('FFmpeg produced empty output - filter chain may have failed');
+    }
+    
     return result;
   } finally {
     // Clean up temp files

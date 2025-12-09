@@ -19,6 +19,16 @@ const stemMashupSchema = z.object({
   instrumentalVolume: z.number().min(0).max(1).optional(),
   durationSeconds: z.number().min(30).max(600).optional(),
   name: z.string().min(1).max(255).optional(),
+  beatAlign: z.boolean().default(true),
+  beatAlignMode: z.enum(['downbeat', 'any']).default('downbeat'),
+  crossfade: z
+    .object({
+      enabled: z.boolean(),
+      duration: z.number().min(0).max(15).optional(),
+      style: z.enum(['smooth', 'drop', 'cut', 'energy']).optional(),
+      transitionAt: z.enum(['start', 'drop', 'chorus', 'auto']).optional(),
+    })
+    .optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -192,6 +202,9 @@ export async function POST(request: NextRequest) {
         vocalVolume: parsed.vocalVolume,
         instrumentalVolume: parsed.instrumentalVolume,
         durationSeconds,
+        beatAlign: parsed.beatAlign,
+        beatAlignMode: parsed.beatAlignMode,
+        crossfade: parsed.crossfade,
       }),
       {
         mashupId: mashup.id,

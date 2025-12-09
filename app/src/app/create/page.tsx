@@ -31,6 +31,18 @@ export default function CreatePage() {
   const [vocalTrackId, setVocalTrackId] = useState<string | null>(null);
   const [instrumentalTrackId, setInstrumentalTrackId] = useState<string | null>(null);
   const [autoKeyMatch, setAutoKeyMatch] = useState(true);
+  const [beatAlign, setBeatAlign] = useState(true);
+  const [beatAlignMode, setBeatAlignMode] = useState<'downbeat' | 'any'>('downbeat');
+  const [crossfadeEnabled, setCrossfadeEnabled] = useState(false);
+  const [crossfadeStyle, setCrossfadeStyle] = useState<'smooth' | 'drop' | 'energy' | 'cut'>('smooth');
+  const [crossfadeDuration, setCrossfadeDuration] = useState(4);
+
+  const crossfadePresets: Record<typeof crossfadeStyle, number> = {
+    smooth: 4,
+    drop: 0.5,
+    energy: 2,
+    cut: 0,
+  };
 
   const scoreStyles = (score: number) => {
     if (score >= 0.8) return 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300';
@@ -186,6 +198,15 @@ export default function CreatePage() {
           instrumentalTrackId,
           autoKeyMatch,
           durationSeconds: durationMap[durationPreset as keyof typeof durationMap],
+          beatAlign,
+          beatAlignMode,
+          crossfade: crossfadeEnabled
+            ? {
+                enabled: true,
+                style: crossfadeStyle,
+                duration: crossfadeDuration,
+              }
+            : undefined,
         }),
       });
 
@@ -516,6 +537,82 @@ export default function CreatePage() {
                           <p className="text-xs text-gray-500">Pitch-shift vocals to match instrumental key</p>
                         </div>
                       </label>
+
+                      {/* Beat alignment */}
+                      <div className="grid gap-2 rounded-lg bg-black/20 border border-white/5 p-3">
+                        <label className="flex items-center gap-3 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={beatAlign}
+                            onChange={(e) => setBeatAlign(e.target.checked)}
+                            className="h-4 w-4 accent-primary"
+                          />
+                          <div>
+                            <p className="text-sm text-white">Beat-sync alignment</p>
+                            <p className="text-xs text-gray-500">Align downbeats for tighter sync</p>
+                          </div>
+                        </label>
+                        <div className="flex items-center gap-2 text-xs text-gray-400">
+                          <span className="whitespace-nowrap">Mode</span>
+                          <select
+                            value={beatAlignMode}
+                            onChange={(e) => setBeatAlignMode(e.target.value as 'downbeat' | 'any')}
+                            disabled={!beatAlign}
+                            className="flex-1 p-2 rounded-md bg-black/30 border border-white/10 text-white text-xs focus:border-primary outline-none disabled:opacity-50"
+                          >
+                            <option value="downbeat">Downbeat</option>
+                            <option value="any">Nearest beat</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Crossfade */}
+                      <div className="grid gap-2 rounded-lg bg-black/20 border border-white/5 p-3">
+                        <label className="flex items-center gap-3 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={crossfadeEnabled}
+                            onChange={(e) => setCrossfadeEnabled(e.target.checked)}
+                            className="h-4 w-4 accent-primary"
+                          />
+                          <div>
+                            <p className="text-sm text-white">Crossfade transition</p>
+                            <p className="text-xs text-gray-500">Blend vocals and instrumental instead of hard mix</p>
+                          </div>
+                        </label>
+                        {crossfadeEnabled && (
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs text-gray-400">Style</span>
+                              <select
+                                value={crossfadeStyle}
+                                onChange={(e) => {
+                                  const style = e.target.value as 'smooth' | 'drop' | 'energy' | 'cut';
+                                  setCrossfadeStyle(style);
+                                  setCrossfadeDuration(crossfadePresets[style]);
+                                }}
+                                className="w-full p-2 rounded-md bg-black/30 border border-white/10 text-white text-xs focus:border-primary outline-none"
+                              >
+                                <option value="smooth">Smooth (4s)</option>
+                                <option value="drop">Drop punch (0.5s)</option>
+                                <option value="energy">DJ style (2s)</option>
+                                <option value="cut">Hard cut</option>
+                              </select>
+                            </div>
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs text-gray-400">Duration (s)</span>
+                              <input
+                                type="number"
+                                min={0}
+                                step={0.1}
+                                value={crossfadeDuration}
+                                onChange={(e) => setCrossfadeDuration(Number(e.target.value) || 0)}
+                                className="w-full p-2 rounded-md bg-black/30 border border-white/10 text-white text-xs focus:border-primary outline-none"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </>
                   )}
                 </CardContent>

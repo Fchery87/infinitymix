@@ -101,3 +101,43 @@ export function calculateTempoRatio(sourceBpm: number | null | undefined, target
   if (!sourceBpm || !targetBpm || sourceBpm <= 0 || targetBpm <= 0) return 1;
   return targetBpm / sourceBpm;
 }
+
+export type BeatAlignMode = 'downbeat' | 'any';
+
+/**
+ * Calculate beat offset to align two tracks' downbeats or nearest beats
+ */
+export function calculateBeatAlignment(
+  vocalBeatGrid: number[],
+  instBeatGrid: number[],
+  vocalBpm: number,
+  mode: BeatAlignMode = 'downbeat'
+): number {
+  if (!vocalBeatGrid.length || !instBeatGrid.length) return 0;
+  if (!vocalBpm || vocalBpm <= 0) return 0;
+
+  const vocalDownbeat = vocalBeatGrid[0];
+  const instDownbeat = instBeatGrid[0];
+  const beatInterval = 60 / vocalBpm;
+  const barInterval = beatInterval * 4;
+
+  let anchorBeat = vocalDownbeat;
+  if (mode === 'any' && vocalBeatGrid.length > 1) {
+    const nearest = vocalBeatGrid.reduce(
+      (best, beat) => {
+        const diff = Math.abs(beat - instDownbeat);
+        return diff < best.diff ? { beat, diff } : best;
+      },
+      { beat: vocalDownbeat, diff: Math.abs(vocalDownbeat - instDownbeat) }
+    );
+    anchorBeat = nearest.beat;
+  }
+
+  let offset = instDownbeat - anchorBeat;
+  offset = Math.round(offset / beatInterval) * beatInterval;
+
+  while (offset > barInterval / 2) offset -= barInterval;
+  while (offset < -barInterval / 2) offset += barInterval;
+
+  return offset;
+}

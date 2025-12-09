@@ -13,7 +13,7 @@ import {
   getHuggingFaceStatus 
 } from './huggingface-stems';
 
-type StemType = (typeof stemTypeEnum.enumValues)[number];
+export type StemType = (typeof stemTypeEnum.enumValues)[number];
 type StemQuality = (typeof stemQualityEnum.enumValues)[number];
 
 const STEM_TYPES: StemType[] = ['vocals', 'drums', 'bass', 'other'];
@@ -438,4 +438,89 @@ export async function getStemSeparationStatus(): Promise<{
   }
 
   return { demucs, huggingface, fallback };
+}
+
+/**
+ * Get a stem buffer by track ID and stem type for use in mixing
+ */
+export async function getStemBuffer(trackId: string, stemType: StemType): Promise<{ buffer: Buffer; mimeType: string } | null> {
+  const storage = await getStorage();
+  if (!storage.getFile) {
+    log('error', 'stems.getStemBuffer', { trackId, stemType, error: 'Storage does not support getFile' });
+    return null;
+  }
+
+  const stems = await db
+    .select()
+    .from(trackStems)
+    .where(eq(trackStems.uploadedTrackId, trackId));
+  
+  const stem = stems.find(s => s.stemType === stemType && s.status === 'completed' && s.storageUrl);
+  
+  if (!stem || !stem.storageUrl) {
+    log('warn', 'stems.getStemBuffer.notFound', { trackId, stemType });
+    return null;
+  }
+
+  try {
+    const file = await storage.getFile(stem.storageUrl);
+    if (!file?.buffer) {
+      log('error', 'stems.getStemBuffer.fetchFailed', { trackId, stemType, url: stem.storageUrl });
+      return null;
+    }
+    return { buffer: file.buffer, mimeType: file.mimeType || 'audio/wav' };
+  } catch (error) {
+    log('error', 'stems.getStemBuffer.error', { trackId, stemType, error: (error as Error).message });
+    return null;
+  }
+}
+
+/**
+ * Get all available stems for a track with their buffers (for mixing)
+ */
+export async function getAllStemBuffers(trackId: string): Promise<Map<StemType, { buffer: Buffer; mimeType: string }>> {
+  const stemTypes: StemType[] = ['vocals', 'drums', 'bass', 'other'];
+  const results = new Map<StemType, { buffer: Buffer; mimeType: string }>();
+  
+  for (const type of stemTypes) {
+    const stem = await getStemBuffer(trackId, type);
+    if (stem) {
+      results.set(type, stem);
+    }
+  }
+  
+  return results;
+}
+
+/**
+ * Get track info needed for stem mashup mixing
+ */
+export async function getTrackInfoForMixing(trackId: string): Promise<{
+  id: string;
+  bpm: number | null;
+  camelotKey: string | null;
+  durationSeconds: number | null;
+  beatGrid: number[] | null;
+} | null> {
+  const tracks = await db
+    .select({
+      id: uploadedTracks.id,
+      bpm: uploadedTracks.bpm,
+      camelotKey: uploadedTracks.camelotKey,
+      durationSeconds: uploadedTracks.durationSeconds,
+      beatGrid: uploadedTracks.beatGrid,
+    })
+    .from(uploadedTracks)
+    .where(eq(uploadedTracks.id, trackId));
+  
+  if (tracks.length === 0) return null;
+  
+  const t = tracks[0];
+  return {
+    id: t.id,
+    bpm: t.bpm ? Number(t.bpm) : null,
+    camelotKey: t.camelotKey,
+    durationSeconds: t.durationSeconds ? Number(t.durationSeconds) : null,
+    beatGrid: t.beatGrid ?? null,
+  };
 }

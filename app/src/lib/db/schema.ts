@@ -134,6 +134,12 @@ export const mashups = pgTable('mashups', {
   isPublic: boolean('is_public').notNull().default(false),
   publicSlug: varchar('public_slug', { length: 64 }),
   parentMashupId: uuid('parent_mashup_id'),
+  // Stem-based mashup fields
+  vocalTrackId: uuid('vocal_track_id').references(() => uploadedTracks.id, { onDelete: 'set null' }),
+  instrumentalTrackId: uuid('instrumental_track_id').references(() => uploadedTracks.id, { onDelete: 'set null' }),
+  targetBpm: decimal('target_bpm', { precision: 6, scale: 2 }),
+  pitchShiftSemitones: integer('pitch_shift_semitones').default(0),
+  autoKeyMatch: boolean('auto_key_match').default(true),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 }, (table) => ({

@@ -162,7 +162,6 @@ export async function separateWithHuggingFace(
     } else if (extractedUrls.length === 5) {
       // 5-stem model: vocals, accompaniment, drums, bass, other
       // Skip accompaniment at index 1
-      const stemNames: StemType[] = ['vocals', 'drums', 'bass', 'other'];
       await downloadStem(extractedUrls[0].url, 'vocals', stemMap);
       await downloadStem(extractedUrls[2].url, 'drums', stemMap);
       await downloadStem(extractedUrls[3].url, 'bass', stemMap);

@@ -7,12 +7,26 @@ import { log } from '@/lib/logger';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegStatic from 'ffmpeg-static';
 import { eq, inArray } from 'drizzle-orm';
+import { getStemBuffer, getTrackInfoForMixing } from './stems-service';
+import { calculatePitchShiftSemitones, semitonesToPitchRatio, calculateTempoRatio, camelotCompatible } from '@/lib/utils/audio-compat';
 
 const OUTPUT_SAMPLE_RATE = 44100;
 const OUTPUT_CHANNELS = 2;
 const OUTPUT_FORMAT = 'mp3';
 const DEFAULT_TARGET_BPM = 120;
 type MixMode = 'standard' | 'vocals_over_instrumental' | 'drum_swap';
+
+// Stem-based mashup configuration
+export type StemMashupConfig = {
+  vocalTrackId: string;        // Track to take vocals from
+  instrumentalTrackId: string; // Track to take instrumental from
+  targetBpm?: number;          // Target BPM (defaults to instrumental track BPM)
+  autoKeyMatch?: boolean;      // Auto pitch-shift vocals to match instrumental key
+  pitchShiftSemitones?: number; // Manual pitch shift override
+  vocalVolume?: number;        // Vocal volume 0-1 (default 0.75)
+  instrumentalVolume?: number; // Instrumental volume 0-1 (default 0.85)
+  durationSeconds?: number;    // Output duration
+};
 
 if (ffmpegStatic) {
   ffmpeg.setFfmpegPath(ffmpegStatic as string);
@@ -264,6 +278,254 @@ export async function renderMashup(mashupId: string, inputTrackIds: string[], du
     handleAsyncError(error as Error, 'renderMashup');
     logTelemetry({ name: 'mashup.render.failed', level: 'error', properties: { mashupId, error: (error as Error)?.message } });
     log('error', 'mashup.render.failed', { mashupId, error: (error as Error)?.message });
+    await db
+      .update(mashups)
+      .set({ generationStatus: 'failed', updatedAt: new Date() })
+      .where(eq(mashups.id, mashupId));
+  }
+}
+
+/**
+ * Mix stems from two tracks: vocals from one, instrumental from another
+ * With optional key matching and BPM sync
+ */
+export async function mixStemMashup(config: StemMashupConfig): Promise<Buffer> {
+  if (!ffmpegStatic) {
+    throw new Error('ffmpeg-static binary not available for mixing');
+  }
+
+  const { vocalTrackId, instrumentalTrackId, autoKeyMatch = true } = config;
+
+  // Load track info for BPM and key
+  const [vocalTrack, instTrack] = await Promise.all([
+    getTrackInfoForMixing(vocalTrackId),
+    getTrackInfoForMixing(instrumentalTrackId),
+  ]);
+
+  if (!vocalTrack || !instTrack) {
+    throw new Error('Could not load track info for mixing');
+  }
+
+  // Load stems
+  const [vocalsStem, instStem] = await Promise.all([
+    getStemBuffer(vocalTrackId, 'vocals'),
+    getStemBuffer(instrumentalTrackId, 'other'), // 'other' = instrumental
+  ]);
+
+  if (!vocalsStem) {
+    throw new Error(`No vocals stem found for track ${vocalTrackId}`);
+  }
+  if (!instStem) {
+    throw new Error(`No instrumental stem found for track ${instrumentalTrackId}`);
+  }
+
+  // Determine target BPM (default to instrumental track BPM)
+  const targetBpm = config.targetBpm ?? instTrack.bpm ?? DEFAULT_TARGET_BPM;
+
+  // Calculate pitch shift for key matching
+  let pitchShiftSemitones = config.pitchShiftSemitones ?? 0;
+  if (autoKeyMatch && pitchShiftSemitones === 0 && vocalTrack.camelotKey && instTrack.camelotKey) {
+    // Check if keys are already compatible
+    if (!camelotCompatible(vocalTrack.camelotKey, instTrack.camelotKey)) {
+      pitchShiftSemitones = calculatePitchShiftSemitones(vocalTrack.camelotKey, instTrack.camelotKey);
+      log('info', 'stemMashup.keyMatch', {
+        vocalKey: vocalTrack.camelotKey,
+        instKey: instTrack.camelotKey,
+        pitchShift: pitchShiftSemitones,
+      });
+    }
+  }
+
+  // Calculate tempo ratios
+  const vocalTempoRatio = calculateTempoRatio(vocalTrack.bpm, targetBpm);
+  const instTempoRatio = calculateTempoRatio(instTrack.bpm, targetBpm);
+
+  // Volume levels
+  const vocalVolume = config.vocalVolume ?? 0.75;
+  const instVolume = config.instrumentalVolume ?? 0.85;
+
+  // Duration
+  const duration = config.durationSeconds ?? Math.min(
+    vocalTrack.durationSeconds ?? 180,
+    instTrack.durationSeconds ?? 180,
+    180
+  );
+
+  console.log(`🎵 Stem Mashup: vocals from ${vocalTrackId}, instrumental from ${instrumentalTrackId}`);
+  console.log(`🎵 Target BPM: ${targetBpm}, Pitch shift: ${pitchShiftSemitones} semitones`);
+  console.log(`🎵 Vocal tempo ratio: ${vocalTempoRatio.toFixed(3)}, Inst tempo ratio: ${instTempoRatio.toFixed(3)}`);
+
+  // Write stems to temp files
+  const fs = await import('fs/promises');
+  const os = await import('os');
+  const path = await import('path');
+  
+  const tempDir = os.tmpdir();
+  const vocalPath = path.join(tempDir, `infinitymix-vocals-${Date.now()}.wav`);
+  const instPath = path.join(tempDir, `infinitymix-inst-${Date.now()}.wav`);
+  
+  await fs.writeFile(vocalPath, vocalsStem.buffer);
+  await fs.writeFile(instPath, instStem.buffer);
+
+  try {
+    const command = ffmpeg();
+    command.input(vocalPath);
+    command.input(instPath);
+
+    // Build filter chain
+    const filterChains: string[] = [];
+
+    // Vocal processing: tempo + pitch shift + EQ + volume
+    let vocalChain = '';
+    const vocalAtempo = buildAtempoChain(vocalTempoRatio);
+    if (vocalAtempo) {
+      vocalChain = vocalAtempo;
+    }
+    
+    // Add pitch shift if needed (using asetrate + atempo combo for pitch without rubberband)
+    // Note: FFmpeg rubberband requires librubberband. Fallback to asetrate method.
+    if (pitchShiftSemitones !== 0) {
+      const pitchRatio = semitonesToPitchRatio(pitchShiftSemitones);
+      const newRate = Math.round(OUTPUT_SAMPLE_RATE * pitchRatio);
+      // asetrate changes pitch by changing playback rate, then we resample back
+      const pitchFilter = `asetrate=${newRate},aresample=${OUTPUT_SAMPLE_RATE}`;
+      vocalChain = vocalChain ? `${vocalChain},${pitchFilter}` : pitchFilter;
+    }
+
+    // Vocal EQ: highpass to remove low rumble, slight presence boost
+    vocalChain = vocalChain 
+      ? `${vocalChain},highpass=f=120,lowpass=f=12000,volume=${vocalVolume}` 
+      : `highpass=f=120,lowpass=f=12000,volume=${vocalVolume}`;
+    filterChains.push(`[0:a]${vocalChain}[vocals]`);
+
+    // Instrumental processing: tempo + EQ + volume
+    let instChain = '';
+    const instAtempo = buildAtempoChain(instTempoRatio);
+    if (instAtempo) {
+      instChain = instAtempo;
+    }
+    
+    // Instrumental EQ: slight low-pass to leave room for vocals
+    instChain = instChain 
+      ? `${instChain},lowpass=f=14000,volume=${instVolume}` 
+      : `lowpass=f=14000,volume=${instVolume}`;
+    filterChains.push(`[1:a]${instChain}[inst]`);
+
+    // Mix vocals and instrumental
+    filterChains.push(`[vocals][inst]amix=inputs=2:duration=shortest:normalize=0[premix]`);
+
+    // Final limiter to prevent clipping
+    filterChains.push(`[premix]alimiter=level_in=1:level_out=0.95[out]`);
+
+    console.log(`🎵 Filter chains: ${JSON.stringify(filterChains)}`);
+
+    command
+      .complexFilter(filterChains, 'out')
+      .outputOptions([
+        `-ac ${OUTPUT_CHANNELS}`,
+        `-ar ${OUTPUT_SAMPLE_RATE}`,
+        `-t ${duration}`,
+        '-b:a 192k',
+      ])
+      .format('mp3');
+
+    const chunks: Buffer[] = [];
+
+    const result = await new Promise<Buffer>((resolve, reject) => {
+      command.on('start', (cmdline) => {
+        console.log(`🎵 FFmpeg stem mashup: ${cmdline}`);
+      });
+      
+      command.on('stderr', (stderrLine) => {
+        if (stderrLine.includes('Error') || stderrLine.includes('error')) {
+          console.error(`🎵 FFmpeg stderr: ${stderrLine}`);
+        }
+      });
+      
+      command.on('error', (err) => {
+        console.error(`❌ FFmpeg stem mashup error:`, err);
+        reject(err);
+      });
+      
+      const output = command.pipe();
+      output.on('data', chunk => {
+        chunks.push(chunk);
+      });
+      output.on('end', () => {
+        resolve(Buffer.concat(chunks));
+      });
+      output.on('error', (err) => {
+        reject(err);
+      });
+    });
+
+    console.log(`✅ Stem mashup complete: ${result.length} bytes`);
+    return result;
+  } finally {
+    // Clean up temp files
+    await fs.unlink(vocalPath).catch(() => {});
+    await fs.unlink(instPath).catch(() => {});
+  }
+}
+
+/**
+ * Create and render a stem-based mashup, saving to database
+ */
+export async function renderStemMashup(
+  mashupId: string,
+  config: StemMashupConfig
+): Promise<void> {
+  const startedAt = Date.now();
+
+  try {
+    logTelemetry({
+      name: 'stemMashup.render.start',
+      properties: { mashupId, vocalTrackId: config.vocalTrackId, instrumentalTrackId: config.instrumentalTrackId },
+    });
+
+    await db
+      .update(mashups)
+      .set({ generationStatus: 'generating', mixMode: 'vocals_over_instrumental', updatedAt: new Date() })
+      .where(eq(mashups.id, mashupId));
+
+    const outputBuffer = await mixStemMashup(config);
+    const storage = await getStorage();
+    const outputUrl = await storage.uploadFile(outputBuffer, `${mashupId}.${OUTPUT_FORMAT}`, 'audio/mpeg');
+
+    const processingTime = Date.now() - startedAt;
+
+    await db
+      .update(mashups)
+      .set({
+        generationStatus: 'completed',
+        outputStorageUrl: outputUrl,
+        publicPlaybackUrl: outputUrl,
+        outputFormat: OUTPUT_FORMAT,
+        generationTimeMs: processingTime,
+        mixMode: 'vocals_over_instrumental',
+        updatedAt: new Date(),
+      })
+      .where(eq(mashups.id, mashupId));
+
+    logTelemetry({
+      name: 'stemMashup.render.completed',
+      properties: {
+        mashupId,
+        vocalTrackId: config.vocalTrackId,
+        instrumentalTrackId: config.instrumentalTrackId,
+        processingTimeMs: processingTime,
+        outputUrl,
+      },
+    });
+
+    log('info', 'stemMashup.render.completed', {
+      mashupId,
+      processingTimeMs: processingTime,
+    });
+  } catch (error) {
+    handleAsyncError(error as Error, 'renderStemMashup');
+    logTelemetry({ name: 'stemMashup.render.failed', level: 'error', properties: { mashupId, error: (error as Error)?.message } });
+    log('error', 'stemMashup.render.failed', { mashupId, error: (error as Error)?.message });
     await db
       .update(mashups)
       .set({ generationStatus: 'failed', updatedAt: new Date() })

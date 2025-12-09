@@ -3,13 +3,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Zap } from 'lucide-react';
+import { Zap, Mic2, Music2, ArrowRight } from 'lucide-react';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { FileUpload } from '@/components/file-upload';
 import { TrackList, Track } from '@/components/track-list';
 import { DurationPicker, DurationPreset } from '@/components/duration-picker';
-import { overallCompatibility } from '@/lib/utils/audio-compat';
+import { overallCompatibility, camelotCompatible } from '@/lib/utils/audio-compat';
+
+type MixMode = 'standard' | 'stem_mashup';
 
 export default function CreatePage() {
   const [isAuthenticated] = useState(true); // Auto-logged in for development
@@ -23,6 +25,12 @@ export default function CreatePage() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isSmartMixing, setIsSmartMixing] = useState(false);
+  
+  // Stem mashup mode
+  const [mixMode, setMixMode] = useState<MixMode>('standard');
+  const [vocalTrackId, setVocalTrackId] = useState<string | null>(null);
+  const [instrumentalTrackId, setInstrumentalTrackId] = useState<string | null>(null);
+  const [autoKeyMatch, setAutoKeyMatch] = useState(true);
 
   const scoreStyles = (score: number) => {
     if (score >= 0.8) return 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300';
@@ -150,6 +158,51 @@ export default function CreatePage() {
     }
   };
 
+  const handleGenerateStemMashup = async () => {
+    if (!vocalTrackId || !instrumentalTrackId) {
+      alert('Select both a vocal track and an instrumental track');
+      return;
+    }
+
+    // Check that both tracks have stems
+    const vocalTrack = uploadedTracks.find(t => t.id === vocalTrackId);
+    const instTrack = uploadedTracks.find(t => t.id === instrumentalTrackId);
+    
+    if (!vocalTrack?.has_stems || !instTrack?.has_stems) {
+      alert('Both tracks must have stems generated. Click the scissors icon on each track first.');
+      return;
+    }
+
+    setIsGenerating(true);
+    setGenerationMessage(null);
+
+    try {
+      const durationMap = { '1_minute': 60, '2_minutes': 120, '3_minutes': 180 };
+      const response = await fetch('/api/mashups/stem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vocalTrackId,
+          instrumentalTrackId,
+          autoKeyMatch,
+          durationSeconds: durationMap[durationPreset as keyof typeof durationMap],
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'Failed to start stem mashup generation');
+      }
+
+      setGenerationMessage('Stem mashup creating! Vocals + Instrumental being mixed. Check My Mashups soon.');
+    } catch (error) {
+      console.error(error);
+      alert(error instanceof Error ? error.message : 'Failed to start stem mashup');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const handlePreview = async () => {
     if (selectedTrackIds.length < 2) {
       alert('Select at least 2 analyzed tracks to preview');
@@ -199,6 +252,29 @@ export default function CreatePage() {
   };
 
   const completedTracks = useMemo(() => uploadedTracks.filter((t) => t.analysis_status === 'completed'), [uploadedTracks]);
+
+  // Tracks with stems available for stem mashup mode
+  const stemTracks = useMemo(() => completedTracks.filter((t) => t.has_stems), [completedTracks]);
+
+  // Key compatibility info for stem mashup
+  const stemKeyInfo = useMemo(() => {
+    if (!vocalTrackId || !instrumentalTrackId) return null;
+    const vocalTrack = stemTracks.find(t => t.id === vocalTrackId);
+    const instTrack = stemTracks.find(t => t.id === instrumentalTrackId);
+    if (!vocalTrack || !instTrack) return null;
+    
+    const vocalKey = vocalTrack.camelot_key ?? vocalTrack.musical_key;
+    const instKey = instTrack.camelot_key ?? instTrack.musical_key;
+    const keysCompatible = camelotCompatible(vocalKey, instKey);
+    
+    return {
+      vocalKey,
+      instKey,
+      keysCompatible,
+      vocalBpm: vocalTrack.bpm,
+      instBpm: instTrack.bpm,
+    };
+  }, [vocalTrackId, instrumentalTrackId, stemTracks]);
 
   const anchorTrack = useMemo(() => {
     if (selectedTrackIds.length === 0) return completedTracks[0] ?? null;
@@ -311,6 +387,141 @@ export default function CreatePage() {
                 onChange={setDurationPreset} 
             />
 
+            {/* Mix Mode Selector */}
+            <Card className="bg-card/60 backdrop-blur-xl border-white/10">
+              <CardContent className="pt-6 space-y-3">
+                <p className="text-sm text-gray-400">Mix Mode</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => setMixMode('standard')}
+                    className={`p-4 rounded-lg border transition-all ${
+                      mixMode === 'standard'
+                        ? 'border-primary bg-primary/10 text-white'
+                        : 'border-white/10 hover:border-white/20 text-gray-400'
+                    }`}
+                  >
+                    <Music2 className="w-5 h-5 mx-auto mb-2" />
+                    <p className="text-sm font-medium">Standard Mix</p>
+                    <p className="text-xs text-gray-500">Layer full tracks</p>
+                  </button>
+                  <button
+                    onClick={() => setMixMode('stem_mashup')}
+                    className={`p-4 rounded-lg border transition-all ${
+                      mixMode === 'stem_mashup'
+                        ? 'border-primary bg-primary/10 text-white'
+                        : 'border-white/10 hover:border-white/20 text-gray-400'
+                    }`}
+                  >
+                    <Mic2 className="w-5 h-5 mx-auto mb-2" />
+                    <p className="text-sm font-medium">Stem Mashup</p>
+                    <p className="text-xs text-gray-500">Vocals + Instrumental</p>
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Stem Mashup Selection - only show when in stem mode */}
+            {mixMode === 'stem_mashup' && (
+              <Card className="bg-card/60 backdrop-blur-xl border-primary/20">
+                <CardContent className="pt-6 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Mic2 className="w-4 h-4 text-primary" />
+                    <p className="text-sm font-medium text-white">Stem Mashup Setup</p>
+                  </div>
+                  
+                  {stemTracks.length < 2 ? (
+                    <div className="text-center py-4">
+                      <p className="text-sm text-gray-400 mb-2">
+                        Need at least 2 tracks with stems generated
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        Click the scissors icon on your tracks below to generate stems
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Vocal Track Selection */}
+                      <div>
+                        <label className="text-xs text-gray-400 mb-2 block">Take VOCALS from:</label>
+                        <select
+                          value={vocalTrackId || ''}
+                          onChange={(e) => setVocalTrackId(e.target.value || null)}
+                          className="w-full p-3 rounded-lg bg-black/30 border border-white/10 text-white text-sm focus:border-primary outline-none"
+                        >
+                          <option value="">Select track for vocals...</option>
+                          {stemTracks.map((track) => (
+                            <option key={track.id} value={track.id}>
+                              {track.original_filename} {track.camelot_key && `(${track.camelot_key})`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Arrow indicator */}
+                      <div className="flex justify-center">
+                        <ArrowRight className="w-5 h-5 text-primary rotate-90" />
+                      </div>
+
+                      {/* Instrumental Track Selection */}
+                      <div>
+                        <label className="text-xs text-gray-400 mb-2 block">Take INSTRUMENTAL from:</label>
+                        <select
+                          value={instrumentalTrackId || ''}
+                          onChange={(e) => setInstrumentalTrackId(e.target.value || null)}
+                          className="w-full p-3 rounded-lg bg-black/30 border border-white/10 text-white text-sm focus:border-primary outline-none"
+                        >
+                          <option value="">Select track for instrumental...</option>
+                          {stemTracks.map((track) => (
+                            <option key={track.id} value={track.id}>
+                              {track.original_filename} {track.camelot_key && `(${track.camelot_key})`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Key compatibility info */}
+                      {stemKeyInfo && (
+                        <div className={`p-3 rounded-lg border ${
+                          stemKeyInfo.keysCompatible 
+                            ? 'bg-emerald-500/10 border-emerald-500/30' 
+                            : 'bg-amber-500/10 border-amber-500/30'
+                        }`}>
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-gray-300">
+                              {stemKeyInfo.vocalKey || '?'} → {stemKeyInfo.instKey || '?'}
+                            </span>
+                            <span className={stemKeyInfo.keysCompatible ? 'text-emerald-300' : 'text-amber-300'}>
+                              {stemKeyInfo.keysCompatible ? 'Keys match!' : 'Will pitch-shift'}
+                            </span>
+                          </div>
+                          {stemKeyInfo.vocalBpm && stemKeyInfo.instBpm && (
+                            <div className="text-xs text-gray-500 mt-1">
+                              {stemKeyInfo.vocalBpm} BPM → {stemKeyInfo.instBpm} BPM 
+                              {Math.abs(stemKeyInfo.vocalBpm - stemKeyInfo.instBpm) > 5 && ' (will time-stretch)'}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Auto key match toggle */}
+                      <label className="flex items-center gap-3 p-3 rounded-lg bg-black/20 border border-white/5 cursor-pointer hover:border-white/10">
+                        <input
+                          type="checkbox"
+                          checked={autoKeyMatch}
+                          onChange={(e) => setAutoKeyMatch(e.target.checked)}
+                          className="h-4 w-4 accent-primary"
+                        />
+                        <div>
+                          <p className="text-sm text-white">Auto key-match</p>
+                          <p className="text-xs text-gray-500">Pitch-shift vocals to match instrumental key</p>
+                        </div>
+                      </label>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
             {/* Preview + surprise me */}
             <Card className="bg-card/60 backdrop-blur-xl border-white/10">
               <CardContent className="pt-6 space-y-3">
@@ -413,31 +624,64 @@ export default function CreatePage() {
             {/* Generation Action */}
             <Card className="bg-card/60 backdrop-blur-xl">
                 <CardContent className="pt-6">
-                    <Button 
-                        className="w-full h-14 text-lg font-bold relative overflow-hidden group" 
-                        variant="default"
-                        onClick={handleGenerateMashup}
-                        disabled={isGenerating || selectedTrackIds.length < 2}
-                    >
-                        <div className="absolute inset-0 bg-gradient-to-r from-primary via-orange-400 to-primary opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                        <span className="relative z-10 flex items-center justify-center">
-                        {isGenerating ? (
-                            <>
-                            <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-3" />
-                            Processing...
-                            </>
-                        ) : (
-                            <>
-                            <Zap className="w-5 h-5 mr-2 fill-white" />
-                            Generate Mashup
-                            </>
+                    {mixMode === 'standard' ? (
+                      <>
+                        <Button 
+                            className="w-full h-14 text-lg font-bold relative overflow-hidden group" 
+                            variant="default"
+                            onClick={handleGenerateMashup}
+                            disabled={isGenerating || selectedTrackIds.length < 2}
+                        >
+                            <div className="absolute inset-0 bg-gradient-to-r from-primary via-orange-400 to-primary opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                            <span className="relative z-10 flex items-center justify-center">
+                            {isGenerating ? (
+                                <>
+                                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-3" />
+                                Processing...
+                                </>
+                            ) : (
+                                <>
+                                <Zap className="w-5 h-5 mr-2 fill-white" />
+                                Generate Mashup
+                                </>
+                            )}
+                            </span>
+                        </Button>
+                        {selectedTrackIds.length < 2 && (
+                            <p className="text-xs text-center mt-3 text-gray-500">
+                            * Requires at least 2 analyzed tracks
+                            </p>
                         )}
-                        </span>
-                    </Button>
-                    {selectedTrackIds.length < 2 && (
-                        <p className="text-xs text-center mt-3 text-gray-500">
-                        * Requires at least 2 analyzed tracks
-                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <Button 
+                            className="w-full h-14 text-lg font-bold relative overflow-hidden group" 
+                            variant="default"
+                            onClick={handleGenerateStemMashup}
+                            disabled={isGenerating || !vocalTrackId || !instrumentalTrackId}
+                        >
+                            <div className="absolute inset-0 bg-gradient-to-r from-pink-500 via-primary to-orange-500 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                            <span className="relative z-10 flex items-center justify-center">
+                            {isGenerating ? (
+                                <>
+                                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-3" />
+                                Mixing Stems...
+                                </>
+                            ) : (
+                                <>
+                                <Mic2 className="w-5 h-5 mr-2" />
+                                Create Stem Mashup
+                                </>
+                            )}
+                            </span>
+                        </Button>
+                        {(!vocalTrackId || !instrumentalTrackId) && (
+                            <p className="text-xs text-center mt-3 text-gray-500">
+                            * Select both vocal and instrumental tracks above
+                            </p>
+                        )}
+                      </>
                     )}
                     {generationMessage && (
                       <p className="text-xs text-center mt-3 text-green-500">{generationMessage}</p>

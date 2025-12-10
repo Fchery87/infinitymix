@@ -90,6 +90,7 @@ export const uploadedTracks = pgTable('uploaded_tracks', {
   structure: jsonb('structure').$type<Array<{ label: string; start: number; end: number; confidence: number }>>(),
   phrases: jsonb('phrases').$type<Array<{ start: number; end: number; energy: number }>>(),
   dropMoments: jsonb('drop_moments').$type<number[]>(),
+  cuePoints: jsonb('cue_points').$type<{ mixIn: number; drop: number | null; breakdown: number | null; mixOut: number; confidence: number; detectedAt?: string }>(),
   waveformLite: jsonb('waveform_lite').$type<number[]>(),
   analysisQuality: varchar('analysis_quality', { length: 32 }).default('standard'),
   analysisVersion: varchar('analysis_version', { length: 20 }).default('phase1-v1'),

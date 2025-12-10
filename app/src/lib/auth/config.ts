@@ -28,12 +28,17 @@ export const authConfig = {
     maxPasswordLength: 64,
   },
   session: {
-    expiresIn: 60 * 60 * 24, // 24 hours
+    expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 5, // 5 minutes
     cookieCache: {
       enabled: true,
       maxAge: 60 * 5, // 5 minutes
     },
+  },
+  advanced: {
+    cookiePrefix: 'infinitymix',
+    // In development, don't require HTTPS for cookies
+    useSecureCookies: process.env.NODE_ENV === 'production',
   },
   account: {
     accountLinking: {

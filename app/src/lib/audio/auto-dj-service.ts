@@ -65,6 +65,25 @@ type TrackBuffer = {
   mimeType: string;
 };
 
+export type EnergyPhase = 'warmup' | 'build' | 'peak' | 'cooldown';
+export type MixInStrategy = 'intro' | 'post_intro' | 'buildup' | 'drop' | 'verse' | 'custom';
+
+export type AutoCuePoints = {
+  mixIn: number;
+  drop: number | null;
+  breakdown: number | null;
+  mixOut: number;
+  confidence: number;
+  detectedAt?: string;
+};
+
+type MixInSelection = {
+  point: number;
+  strategy: MixInStrategy;
+  reason: string;
+  cuePoints: AutoCuePoints;
+};
+
 export type AutoDjConfig = {
   trackIds: string[];
   targetDurationSeconds: number;
@@ -96,6 +115,7 @@ export type PlannedTransition = {
   curve1: string;
   curve2: string;
   mixPoint: MixPoint;
+  mixInPoint: MixInSelection;
   vocalCollision?: VocalCollision;
   bpmDiff?: number;
   suggestedType?: 'standard' | 'instrumental_bridge' | 'filter_sweep' | 'tempo_ramp';
@@ -169,6 +189,152 @@ function snapToPhraseBoundary(value: number, phraseLength: PhraseLength, barDura
   return Math.max(0, Math.round(value / phraseSeconds) * phraseSeconds);
 }
 
+function normalizeStructure(track: TrackInfo | undefined) {
+  return (track?.structure ?? [])
+    .map((s) => ({ ...s, label: (s.label || '').toLowerCase() }))
+    .sort((a, b) => a.start - b.start);
+}
+
+function findSection(
+  structure: Array<{ label: string; start: number; end: number; confidence: number }>,
+  labels: string[]
+) {
+  return structure.find((s) => labels.includes(s.label));
+}
+
+export function detectCuePoints(trackInfo: TrackInfo): AutoCuePoints {
+  const structure = normalizeStructure(trackInfo);
+  const bpm = Number(trackInfo.bpm) || 120;
+  const barDuration = getBarDuration(bpm);
+  const duration = Number(trackInfo.durationSeconds) || 180;
+
+  const intro = findSection(structure, ['intro']);
+  const verse = findSection(structure, ['verse']);
+  const buildup = findSection(structure, ['buildup', 'build']);
+  const drop = findSection(structure, ['drop', 'chorus']);
+  const breakdown = findSection(structure, ['breakdown']);
+  const outro = findSection(structure, ['outro']);
+
+  let mixIn = 0;
+  if (intro?.end) {
+    mixIn = snapToPhraseBoundary(intro.end, 8, barDuration);
+  } else if (verse?.start) {
+    mixIn = snapToPhraseBoundary(verse.start, 8, barDuration);
+  } else if (buildup?.start) {
+    mixIn = snapToPhraseBoundary(buildup.start, 8, barDuration);
+  } else {
+    mixIn = Math.min(16 * barDuration, duration * 0.1);
+  }
+
+  const dropPoint = drop?.start ?? trackInfo.dropMoments?.[0] ?? null;
+  const breakdownPoint = breakdown?.start ?? null;
+
+  let mixOut = duration;
+  if (outro?.start) {
+    mixOut = snapToPhraseBoundary(outro.start, 8, barDuration);
+  } else {
+    mixOut = Math.max(0, duration - 32 * barDuration);
+  }
+
+  return {
+    mixIn: Math.max(0, mixIn),
+    drop: dropPoint,
+    breakdown: breakdownPoint,
+    mixOut: Math.min(duration, mixOut),
+    confidence: structure.length > 0 ? 0.8 : 0.5,
+    detectedAt: new Date().toISOString(),
+  };
+}
+
+function getEnergyPhase(index: number, total: number, mode: AutoDjEnergyMode | undefined): EnergyPhase {
+  if (mode === 'steady') return 'build';
+  if (mode === 'wave') {
+    const cycle = index % 3;
+    if (cycle === 0) return 'build';
+    if (cycle === 1) return 'peak';
+    return 'cooldown';
+  }
+
+  const progress = total > 1 ? index / (total - 1) : 0;
+  if (progress < 0.25) return 'warmup';
+  if (progress < 0.6) return 'build';
+  if (progress < 0.9) return 'peak';
+  return 'cooldown';
+}
+
+function selectMixInPoint(
+  incomingTrack: TrackInfo,
+  _outgoingTrack: TrackInfo | undefined,
+  context: { transitionStyle: AutoDjTransitionStyle; energyPhase: EnergyPhase; overlapDuration: number }
+): MixInSelection {
+  const cuePoints = incomingTrack.cuePoints ?? detectCuePoints(incomingTrack);
+  const barDuration = getBarDuration(Number(incomingTrack.bpm) || 120);
+
+  if (context.transitionStyle === 'drop' && cuePoints.drop !== null) {
+    return {
+      point: cuePoints.drop,
+      strategy: 'drop',
+      reason: 'Drop mixing: entering at first drop for maximum impact',
+      cuePoints,
+    };
+  }
+
+  if (context.energyPhase === 'peak') {
+    const buildup = normalizeStructure(incomingTrack).find((s) => s.label === 'buildup');
+    if (buildup) {
+      return {
+        point: snapToPhraseBoundary(buildup.start, 8, barDuration),
+        strategy: 'buildup',
+        reason: 'Peak phase: entering at buildup to maintain energy',
+        cuePoints,
+      };
+    }
+    if (cuePoints.drop !== null) {
+      return {
+        point: cuePoints.drop,
+        strategy: 'drop',
+        reason: 'Peak phase: entering at drop to keep momentum',
+        cuePoints,
+      };
+    }
+  }
+
+  if (context.overlapDuration < 8 * barDuration) {
+    return {
+      point: cuePoints.mixIn,
+      strategy: 'post_intro',
+      reason: 'Short transition: skipping intro for tighter blend',
+      cuePoints,
+    };
+  }
+
+  if (context.overlapDuration >= 16 * barDuration) {
+    return {
+      point: 0,
+      strategy: 'intro',
+      reason: 'Long transition: using full intro for gradual blend',
+      cuePoints,
+    };
+  }
+
+  const verse = normalizeStructure(incomingTrack).find((s) => s.label === 'verse');
+  if (verse) {
+    return {
+      point: snapToPhraseBoundary(verse.start, 8, barDuration),
+      strategy: 'verse',
+      reason: 'Balanced energy: starting at verse after intro',
+      cuePoints,
+    };
+  }
+
+  return {
+    point: cuePoints.mixIn,
+    strategy: 'post_intro',
+    reason: 'Standard transition: starting after intro',
+    cuePoints,
+  };
+}
+
 function isVocalSection(label: string | undefined) {
   if (!label) return false;
   const vocalish = ['verse', 'chorus', 'buildup', 'bridge', 'hook'];
@@ -220,47 +386,66 @@ function findNextAllowedMixOut(track: TrackInfo | undefined, start: number, barD
   return snapToPhraseBoundary(Math.max(start, lastEnd - 8 * barDuration), 8, barDuration);
 }
 
-function findPhraseAlignedMixPoint(trackA: TrackInfo, trackB: TrackInfo, targetBpm: number): MixPoint {
+function findPhraseAlignedMixPoint(
+  trackA: TrackInfo,
+  trackB: TrackInfo,
+  targetBpm: number,
+  incomingStart: number,
+  overlapHintSeconds?: number,
+  strategy?: MixInStrategy
+): MixPoint {
   const barDuration = getBarDuration(targetBpm);
   const outroStart = trackA.structure?.find((s) => s.label === 'outro')?.start ?? Math.max(0, (Number(trackA.durationSeconds) || 0) - 32 * barDuration);
   const snappedOutro = snapToPhraseBoundary(outroStart, 8, barDuration);
+  const snappedIn = snapToPhraseBoundary(incomingStart, 8, barDuration);
+  const phraseAligned = Math.abs(snappedIn - incomingStart) < barDuration / 2;
   const introEnd = trackB.structure?.find((s) => s.label === 'intro')?.end ?? 16 * barDuration;
-  const overlapBars = Math.min(16, Math.max(4, Math.round(introEnd / barDuration)));
+  const overlapSource = overlapHintSeconds ?? introEnd ?? 8 * barDuration;
+  const minBars = strategy === 'drop' ? 2 : 4;
+  const overlapBars = Math.min(16, Math.max(minBars, Math.round(Math.max(overlapSource, 1) / barDuration)));
   const mixPoint: MixPoint = {
     outStart: snappedOutro,
-    inStart: 0,
+    inStart: snappedIn,
     overlapSeconds: overlapBars * barDuration,
-    phraseAligned: true,
+    phraseAligned,
     outSection: getStructureAt(trackA, snappedOutro),
-    inSection: getStructureAt(trackB, 0),
+    inSection: getStructureAt(trackB, snappedIn),
   };
   return mixPoint;
 }
 
-function validateMixPoint(trackA: TrackInfo, trackB: TrackInfo, proposed: MixPoint, targetBpm: number): MixPoint {
+function validateMixPoint(trackA: TrackInfo, trackB: TrackInfo, proposed: MixPoint, targetBpm: number, options?: { allowDropIn?: boolean }): MixPoint {
   const warnings: string[] = [];
   const barDuration = getBarDuration(targetBpm);
-  const structureAtOut = getStructureAt(trackA, proposed.outStart);
-  const structureAtIn = getStructureAt(trackB, proposed.inStart);
+  let structureAtOut = getStructureAt(trackA, proposed.outStart);
+  let structureAtIn = getStructureAt(trackB, proposed.inStart);
 
   if (structureAtOut && STRUCTURE_RULES.mixOutForbidden.includes(structureAtOut)) {
     const alternative = findNextAllowedMixOut(trackA, proposed.outStart, barDuration);
     warnings.push(`Adjusted mix-out from ${structureAtOut} to allowed section at ${alternative.toFixed(2)}s`);
     proposed = { ...proposed, outStart: alternative, phraseAligned: false };
+    structureAtOut = getStructureAt(trackA, proposed.outStart);
   }
 
-  if (structureAtIn && STRUCTURE_RULES.mixInForbidden.includes(structureAtIn)) {
+  if (structureAtIn && STRUCTURE_RULES.mixInForbidden.includes(structureAtIn) && !options?.allowDropIn) {
     const introStart = snapToPhraseBoundary(proposed.inStart + 4 * barDuration, 8, barDuration);
     warnings.push(`Adjusted mix-in away from ${structureAtIn} to ${introStart.toFixed(2)}s`);
     proposed = { ...proposed, inStart: introStart, phraseAligned: false };
+    structureAtIn = getStructureAt(trackB, proposed.inStart);
   }
 
   return { ...proposed, warnings: warnings.length ? warnings : undefined, outSection: structureAtOut, inSection: structureAtIn };
 }
 
-function buildMixPoint(trackA: TrackInfo, trackB: TrackInfo, targetBpm: number): MixPoint {
-  const base = findPhraseAlignedMixPoint(trackA, trackB, targetBpm);
-  const validated = validateMixPoint(trackA, trackB, base, targetBpm);
+function buildMixPoint(
+  trackA: TrackInfo,
+  trackB: TrackInfo,
+  targetBpm: number,
+  mixInSelection: MixInSelection | undefined,
+  overlapHintSeconds?: number
+): MixPoint {
+  const base = findPhraseAlignedMixPoint(trackA, trackB, targetBpm, mixInSelection?.point ?? 0, overlapHintSeconds, mixInSelection?.strategy);
+  const validated = validateMixPoint(trackA, trackB, base, targetBpm, { allowDropIn: mixInSelection?.strategy === 'drop' });
   return validated;
 }
 
@@ -426,6 +611,7 @@ export async function planAutoDjMix(trackInfos: TrackInfo[], config: AutoDjConfi
   const transitionStyle = config.transitionStyle ?? 'smooth';
   const preset = CROSSFADE_PRESETS[transitionStyle];
   const targetBpm = config.targetBpm ?? (median(trackInfos.map((t) => t.bpm || 0).filter(Boolean)) ?? 120);
+  const cueCache = new Map<string, AutoCuePoints>();
 
   let ordered = config.keepOrder
     ? [...config.trackIds]
@@ -456,6 +642,33 @@ export async function planAutoDjMix(trackInfos: TrackInfo[], config: AutoDjConfi
     const to = trackInfos.find((t) => t.id === ordered[i + 1]);
     if (!from || !to) continue;
 
+    let incomingCuePoints = to.cuePoints ?? cueCache.get(to.id) ?? null;
+    let newlyDetectedCuePoints = false;
+    if (!incomingCuePoints) {
+      incomingCuePoints = detectCuePoints(to);
+      newlyDetectedCuePoints = true;
+      cueCache.set(to.id, incomingCuePoints);
+    }
+
+    if (newlyDetectedCuePoints) {
+      try {
+        await db
+          .update(uploadedTracks)
+          .set({ cuePoints: incomingCuePoints, updatedAt: new Date() })
+          .where(eq(uploadedTracks.id, to.id));
+      } catch (error) {
+        log('warn', 'autoDj.cue.persist_failed', { trackId: to.id, error: (error as Error).message });
+      }
+    }
+
+    const presetFade = Math.min(adjustFadeForEvent(config.eventType, config.fadeDurationSeconds ?? preset.duration), 8);
+    const energyPhase = getEnergyPhase(i, ordered.length, config.energyMode);
+    const mixInSelection = selectMixInPoint({ ...to, cuePoints: incomingCuePoints }, from, {
+      transitionStyle,
+      energyPhase,
+      overlapDuration: presetFade,
+    });
+
     const fromBpm = from?.bpm ? Number(from.bpm) : targetBpm;
     const toBpm = to?.bpm ? Number(to.bpm) : targetBpm;
     const fromRatio = clampTempoRatio(calculateTempoRatio(fromBpm, targetBpm));
@@ -463,8 +676,7 @@ export async function planAutoDjMix(trackInfos: TrackInfo[], config: AutoDjConfi
     const fromGrid = (from?.beatGrid ?? []).map((t) => t / fromRatio);
     const toGrid = (to?.beatGrid ?? []).map((t) => t / toRatio);
     const beatOffset = calculateBeatAlignment(fromGrid, toGrid, targetBpm, 'downbeat');
-    const mixPoint = buildMixPoint(from, to, targetBpm);
-    const presetFade = Math.min(adjustFadeForEvent(config.eventType, config.fadeDurationSeconds ?? preset.duration), 8);
+    const mixPoint = buildMixPoint(from, to, targetBpm, mixInSelection, presetFade);
     const fadeDuration = Math.max(0, Math.min(presetFade, mixPoint.overlapSeconds || presetFade));
     const vocalCollision = detectVocalCollision(from, to, mixPoint, targetBpm);
     const bpmDiff = Math.abs((fromBpm || targetBpm) - (toBpm || targetBpm));
@@ -479,6 +691,7 @@ export async function planAutoDjMix(trackInfos: TrackInfo[], config: AutoDjConfi
       curve1: preset.curve1,
       curve2: preset.curve2,
       mixPoint,
+      mixInPoint: mixInSelection,
       vocalCollision,
       bpmDiff,
       suggestedType,
@@ -550,6 +763,7 @@ export async function renderAutoDjMix(
       adjustedDuration: number;
       maxSegmentDuration: number;
       startOffset: number;
+      startOffsetSource: number;
       startTime: number;
       fadeInDuration: number;
       fadeOutStart: number | null;
@@ -583,18 +797,24 @@ export async function renderAutoDjMix(
       const rawDuration = info?.durationSeconds ? Number(info.durationSeconds) : fallbackDuration;
       const adjustedDuration = rawDuration / (tempoRatio || 1);
       const validAdjustedDuration = Number.isFinite(adjustedDuration) && adjustedDuration > 0 ? adjustedDuration : fallbackDuration;
+      const mixInOriginal = idx === 0 ? 0 : plan.transitions[idx - 1]?.mixInPoint?.point ?? 0;
+      const intendedStartOffset = mixInOriginal / (tempoRatio || 1);
+      const safeStartOffset = Math.max(0, Math.min(intendedStartOffset, Math.max(validAdjustedDuration - 1, 0)));
+      const fadeForTrack = idx === 0 ? 0 : (plan.transitions[idx - 1]?.fadeDuration ?? avgFade);
       
       // Each track is limited to its segment duration (but can be shorter if track is shorter)
-      const maxSegment = Math.min(validAdjustedDuration, targetSegmentDuration);
+      const baseSegment = Math.min(validAdjustedDuration, targetSegmentDuration + safeStartOffset);
+      const maxSegment = Math.min(validAdjustedDuration, Math.max(baseSegment, safeStartOffset + Math.max(fadeForTrack, 2)));
       
       return {
         id: track.id,
         tempoRatio,
         adjustedDuration: validAdjustedDuration,
         maxSegmentDuration: maxSegment,
-        startOffset: 0,
-        startTime: idx === 0 ? 0 : 0,
-        fadeInDuration: idx === 0 ? 0 : (plan.transitions[idx - 1]?.fadeDuration ?? avgFade),
+        startOffset: Number(safeStartOffset.toFixed(3)),
+        startOffsetSource: Number(mixInOriginal.toFixed(3)),
+        startTime: 0,
+        fadeInDuration: idx === 0 ? 0 : fadeForTrack,
         fadeOutStart: null,
         fadeOutDuration: 0,
         trimEnd: maxSegment,
@@ -609,44 +829,45 @@ export async function renderAutoDjMix(
       const currentPlan = playbackPlans[i];
       const transition = i > 0 ? plan.transitions[i - 1] : null;
       const fadeDuration = transition?.fadeDuration ?? avgFade;
+      currentPlan.fadeInDuration = i === 0 ? 0 : fadeDuration;
       
       if (i === 0) {
         // First track starts at 0
         currentPlan.startTime = 0;
-        currentPlan.startOffset = 0;
-        currentPlan.fadeInDuration = 0;
       } else {
         // Subsequent tracks start at previous track's fade-out point
         const prevPlan = playbackPlans[i - 1];
-        const stepDuration = prevPlan.maxSegmentDuration - fadeDuration;
+        const prevPlayable = Math.max(prevPlan.trimEnd - prevPlan.startOffset, 0);
+        const stepDuration = Math.max(prevPlayable - fadeDuration, 0);
         currentPlan.startTime = prevPlan.startTime + stepDuration;
-        currentPlan.startOffset = 0;
-        currentPlan.fadeInDuration = fadeDuration;
       }
       
       // Set fade out (except for last track)
       if (i < playbackPlans.length - 1) {
         const nextTransition = plan.transitions[i];
         const nextFade = nextTransition?.fadeDuration ?? avgFade;
-        currentPlan.fadeOutStart = currentPlan.maxSegmentDuration - nextFade;
+        const fadeOutStart = Math.max(currentPlan.startOffset, currentPlan.trimEnd - nextFade);
+        currentPlan.fadeOutStart = fadeOutStart;
         currentPlan.fadeOutDuration = nextFade;
-        currentPlan.trimEnd = currentPlan.maxSegmentDuration;
+        currentPlan.trimEnd = Math.min(currentPlan.adjustedDuration, Math.max(currentPlan.trimEnd, fadeOutStart + nextFade));
       } else {
         // Last track: no fade out, play to fill remaining duration
-        const remaining = Math.max(currentPlan.maxSegmentDuration, config.targetDurationSeconds - currentPlan.startTime);
+        const remaining = Math.max(currentPlan.maxSegmentDuration - currentPlan.startOffset, config.targetDurationSeconds - currentPlan.startTime);
         currentPlan.fadeOutStart = null;
         currentPlan.fadeOutDuration = 0;
-        currentPlan.trimEnd = Math.min(currentPlan.adjustedDuration, remaining);
+        currentPlan.trimEnd = Math.min(currentPlan.adjustedDuration, currentPlan.startOffset + remaining);
       }
     }
 
     playbackPlans.forEach((plan) => {
       const info = trackInfos.find((t) => t.id === plan.id);
-      const mixOutSection = info ? getStructureAt(info, (plan.startOffset + (plan.fadeOutStart ?? 0)) * (plan.tempoRatio || 1)) : undefined;
+      const fadeProbe = plan.fadeOutStart ?? plan.trimEnd;
+      const mixOutSection = info ? getStructureAt(info, (plan.startOffset + fadeProbe) * (plan.tempoRatio || 1)) : undefined;
       const logPayload = {
         trackId: plan.id,
         startTime: Number(plan.startTime.toFixed(2)),
         startOffset: Number(plan.startOffset.toFixed(2)),
+        startOffsetOriginal: Number(plan.startOffsetSource.toFixed(2)),
         fadeIn: Number(plan.fadeInDuration.toFixed(2)),
         fadeOutStart: Number((plan.fadeOutStart ?? 0).toFixed(2)),
         fadeOutDuration: Number(plan.fadeOutDuration.toFixed(2)),
@@ -691,7 +912,10 @@ export async function renderAutoDjMix(
     const mixInputs = playbackPlans.map((_, i) => `[d${i}]`).join('');
     filters.push(`${mixInputs}amix=inputs=${playbackPlans.length}:duration=longest:normalize=0[mixed]`);
 
-    const estimatedEnd = playbackPlans.reduce((max, plan) => Math.max(max, plan.startTime + plan.trimEnd), 0);
+    const estimatedEnd = playbackPlans.reduce(
+      (max, plan) => Math.max(max, plan.startTime + Math.max(plan.trimEnd - plan.startOffset, 0)),
+      0
+    );
     const safeDuration = Math.max(30, Math.round(Math.max(config.targetDurationSeconds, estimatedEnd)));
 
     const executeMix = async (filterGraph: string[], duration: number) => {

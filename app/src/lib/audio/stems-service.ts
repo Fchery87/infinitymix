@@ -503,6 +503,7 @@ export async function getTrackInfoForMixing(trackId: string): Promise<{
   beatGrid: number[] | null;
   dropMoments: number[] | null;
   structure: Array<{ label: string; start: number; end: number; confidence: number }> | null;
+  cuePoints: { mixIn: number; drop: number | null; breakdown: number | null; mixOut: number; confidence: number; detectedAt?: string } | null;
 } | null> {
   const tracks = await db
     .select({
@@ -513,6 +514,7 @@ export async function getTrackInfoForMixing(trackId: string): Promise<{
       beatGrid: uploadedTracks.beatGrid,
       dropMoments: uploadedTracks.dropMoments,
       structure: uploadedTracks.structure,
+      cuePoints: uploadedTracks.cuePoints,
     })
     .from(uploadedTracks)
     .where(eq(uploadedTracks.id, trackId));
@@ -528,5 +530,6 @@ export async function getTrackInfoForMixing(trackId: string): Promise<{
     beatGrid: t.beatGrid ?? null,
     dropMoments: t.dropMoments ?? null,
     structure: t.structure ?? null,
+    cuePoints: t.cuePoints ?? null,
   };
 }

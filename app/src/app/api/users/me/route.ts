@@ -164,8 +164,84 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Delete user and all associated data
-    await db.delete(users).where(eq(users.id, session.user.id));
+    // Clean up all user files from R2 storage before deleting from database
+    const { getStorage } = await import('@/lib/storage');
+    const { uploadedTracks, trackStems, mashups } = await import('@/lib/db/schema');
+    const { log } = await import('@/lib/logger');
+    const storage = await getStorage();
+    const userId = session.user.id;
+
+    // Get all tracks owned by user
+    const userTracks = await db
+      .select({ id: uploadedTracks.id, storageUrl: uploadedTracks.storageUrl })
+      .from(uploadedTracks)
+      .where(eq(uploadedTracks.userId, userId));
+
+    // Delete all stem files for user's tracks
+    for (const track of userTracks) {
+      const stems = await db
+        .select({ id: trackStems.id, storageUrl: trackStems.storageUrl })
+        .from(trackStems)
+        .where(eq(trackStems.uploadedTrackId, track.id));
+
+      for (const stem of stems) {
+        if (stem.storageUrl) {
+          try {
+            await storage.deleteFile(stem.storageUrl);
+          } catch (error) {
+            log('warn', 'user.delete.stem.failed', { userId, stemId: stem.id, error: (error as Error).message });
+          }
+        }
+      }
+
+      // Delete track file
+      if (track.storageUrl) {
+        try {
+          await storage.deleteFile(track.storageUrl);
+        } catch (error) {
+          log('warn', 'user.delete.track.failed', { userId, trackId: track.id, error: (error as Error).message });
+        }
+      }
+    }
+
+    // Get all mashups owned by user
+    const userMashups = await db
+      .select({ 
+        id: mashups.id, 
+        outputStorageUrl: mashups.outputStorageUrl,
+        previewStorageUrl: mashups.previewStorageUrl,
+      })
+      .from(mashups)
+      .where(eq(mashups.userId, userId));
+
+    // Delete all mashup files
+    for (const mashup of userMashups) {
+      if (mashup.outputStorageUrl) {
+        try {
+          await storage.deleteFile(mashup.outputStorageUrl);
+        } catch (error) {
+          log('warn', 'user.delete.mashup.output.failed', { userId, mashupId: mashup.id, error: (error as Error).message });
+        }
+      }
+      if (mashup.previewStorageUrl) {
+        try {
+          await storage.deleteFile(mashup.previewStorageUrl);
+        } catch (error) {
+          log('warn', 'user.delete.mashup.preview.failed', { userId, mashupId: mashup.id, error: (error as Error).message });
+        }
+      }
+    }
+
+    log('info', 'user.files.cleanup.complete', { 
+      userId, 
+      tracksDeleted: userTracks.length, 
+      mashupsDeleted: userMashups.length 
+    });
+
+    // Delete user and all associated data (cascade handles DB relations)
+    await db.delete(users).where(eq(users.id, userId));
+
+    log('info', 'user.deleted', { userId });
 
     // Sign out the user
     const signOutResult = await auth.api.signOut({

@@ -77,15 +77,55 @@ export async function DELETE(
     if (!mashupId) return NextResponse.json({ error: 'Mashup ID is required' }, { status: 400 });
 
     const [mashup] = await db
-      .select({ id: mashups.id, outputStorageUrl: mashups.outputStorageUrl })
+      .select({ 
+        id: mashups.id, 
+        outputStorageUrl: mashups.outputStorageUrl,
+        previewStorageUrl: mashups.previewStorageUrl,
+      })
       .from(mashups)
       .where(and(eq(mashups.id, mashupId), eq(mashups.userId, user.id)));
 
     if (!mashup) return NextResponse.json({ error: 'Mashup not found' }, { status: 404 });
 
+    // Delete files from R2 storage
+    const { getStorage } = await import('@/lib/storage');
+    const { log } = await import('@/lib/logger');
+    const storage = await getStorage();
+
+    // Delete output file from R2
+    if (mashup.outputStorageUrl) {
+      try {
+        await storage.deleteFile(mashup.outputStorageUrl);
+        log('info', 'storage.delete.mashup.output', { mashupId, url: mashup.outputStorageUrl });
+      } catch (error) {
+        log('warn', 'storage.delete.mashup.output.failed', { 
+          mashupId, 
+          url: mashup.outputStorageUrl,
+          error: (error as Error).message 
+        });
+      }
+    }
+
+    // Delete preview file from R2 (if exists)
+    if (mashup.previewStorageUrl) {
+      try {
+        await storage.deleteFile(mashup.previewStorageUrl);
+        log('info', 'storage.delete.mashup.preview', { mashupId, url: mashup.previewStorageUrl });
+      } catch (error) {
+        log('warn', 'storage.delete.mashup.preview.failed', { 
+          mashupId, 
+          url: mashup.previewStorageUrl,
+          error: (error as Error).message 
+        });
+      }
+    }
+
+    // Delete from database (cascade will handle mashupInputTracks, playbackSurveys, etc.)
     await db
       .delete(mashups)
       .where(and(eq(mashups.id, mashupId), eq(mashups.userId, user.id)));
+
+    log('info', 'mashup.deleted', { mashupId, userId: user.id });
 
     return new NextResponse(null, { status: 204 });
   } catch (error) {

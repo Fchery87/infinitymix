@@ -11,7 +11,7 @@ import { TrackList, Track } from '@/components/track-list';
 import { DurationPicker, DurationPreset } from '@/components/duration-picker';
 import { overallCompatibility, camelotCompatible } from '@/lib/utils/audio-compat';
 
-type MixMode = 'standard' | 'stem_mashup';
+type MixMode = 'standard' | 'stem_mashup' | 'auto_dj';
 
 export default function CreatePage() {
   const [isAuthenticated] = useState(true); // Auto-logged in for development
@@ -20,6 +20,7 @@ export default function CreatePage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoadingTracks, setIsLoadingTracks] = useState(false);
   const [durationPreset, setDurationPreset] = useState<DurationPreset>('2_minutes');
+  const [customDurationSeconds, setCustomDurationSeconds] = useState<number | null>(180);
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [generationMessage, setGenerationMessage] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -31,6 +32,12 @@ export default function CreatePage() {
   const [vocalTrackId, setVocalTrackId] = useState<string | null>(null);
   const [instrumentalTrackId, setInstrumentalTrackId] = useState<string | null>(null);
   const [autoKeyMatch, setAutoKeyMatch] = useState(true);
+  const [autoDjEnergyMode, setAutoDjEnergyMode] = useState<'steady' | 'build' | 'wave'>('steady');
+  const [autoDjTransitionStyle, setAutoDjTransitionStyle] = useState<'smooth' | 'drop' | 'energy' | 'cut'>('smooth');
+  const [autoDjTargetBpm, setAutoDjTargetBpm] = useState<number | null>(null);
+  const [preferStems, setPreferStems] = useState(true);
+  const [keepOrder, setKeepOrder] = useState(false);
+  const [eventType, setEventType] = useState<'wedding' | 'birthday' | 'sweet16' | 'club' | 'default'>('default');
   const [beatAlign, setBeatAlign] = useState(true);
   const [beatAlignMode, setBeatAlignMode] = useState<'downbeat' | 'any'>('downbeat');
   const [crossfadeEnabled, setCrossfadeEnabled] = useState(false);
@@ -141,6 +148,9 @@ export default function CreatePage() {
       return;
     }
 
+    const durationMap = { '1_minute': 60, '2_minutes': 120, '3_minutes': 180, custom: customDurationSeconds ?? 180 } as const;
+    const targetDuration = durationMap[durationPreset] ?? 180;
+
     setIsGenerating(true);
     setGenerationMessage(null);
 
@@ -153,6 +163,7 @@ export default function CreatePage() {
         body: JSON.stringify({
           inputFileIds: selectedTrackIds,
           durationPreset,
+          durationSeconds: targetDuration,
         }),
       });
 
@@ -189,7 +200,7 @@ export default function CreatePage() {
     setGenerationMessage(null);
 
     try {
-      const durationMap = { '1_minute': 60, '2_minutes': 120, '3_minutes': 180 };
+      const durationMap = { '1_minute': 60, '2_minutes': 120, '3_minutes': 180, custom: customDurationSeconds ?? 180 } as const;
       const response = await fetch('/api/mashups/stem', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -219,6 +230,48 @@ export default function CreatePage() {
     } catch (error) {
       console.error(error);
       alert(error instanceof Error ? error.message : 'Failed to start stem mashup');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleGenerateAutoDjMix = async () => {
+    if (selectedTrackIds.length < 2) {
+      alert('Select at least 2 analyzed tracks');
+      return;
+    }
+
+    setIsGenerating(true);
+    setGenerationMessage(null);
+
+    try {
+      const durationMap = { '1_minute': 60, '2_minutes': 120, '3_minutes': 180, custom: customDurationSeconds ?? 180 } as const;
+      const targetDuration = durationMap[durationPreset as keyof typeof durationMap];
+
+      const response = await fetch('/api/mashups/djmix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          trackIds: selectedTrackIds,
+          targetDurationSeconds: targetDuration,
+          targetBpm: autoDjTargetBpm ?? undefined,
+          transitionStyle: autoDjTransitionStyle,
+          energyMode: autoDjEnergyMode,
+          preferStems,
+          keepOrder,
+          eventType,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'Failed to start auto DJ mix');
+      }
+
+      setGenerationMessage('Auto DJ mix is being created. Check My Mashups soon.');
+    } catch (error) {
+      console.error(error);
+      alert(error instanceof Error ? error.message : 'Failed to start auto DJ mix');
     } finally {
       setIsGenerating(false);
     }
@@ -405,14 +458,21 @@ export default function CreatePage() {
             {/* Settings using reusable DurationPicker */}
             <DurationPicker 
                 value={durationPreset} 
-                onChange={setDurationPreset} 
+                customSeconds={customDurationSeconds ?? undefined}
+                onChange={(v) => {
+                  setDurationPreset(v);
+                  if (v !== 'custom' && customDurationSeconds === null) {
+                    setCustomDurationSeconds(180);
+                  }
+                }}
+                onCustomChange={(secs) => setCustomDurationSeconds(secs || null)}
             />
 
             {/* Mix Mode Selector */}
             <Card className="bg-card/60 backdrop-blur-xl border-white/10">
               <CardContent className="pt-6 space-y-3">
                 <p className="text-sm text-gray-400">Mix Mode</p>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-3 gap-3">
                   <button
                     onClick={() => setMixMode('standard')}
                     className={`p-4 rounded-lg border transition-all ${
@@ -436,6 +496,18 @@ export default function CreatePage() {
                     <Mic2 className="w-5 h-5 mx-auto mb-2" />
                     <p className="text-sm font-medium">Stem Mashup</p>
                     <p className="text-xs text-gray-500">Vocals + Instrumental</p>
+                  </button>
+                  <button
+                    onClick={() => setMixMode('auto_dj')}
+                    className={`p-4 rounded-lg border transition-all ${
+                      mixMode === 'auto_dj'
+                        ? 'border-primary bg-primary/10 text-white'
+                        : 'border-white/10 hover:border-white/20 text-gray-400'
+                    }`}
+                  >
+                    <Zap className="w-5 h-5 mx-auto mb-2" />
+                    <p className="text-sm font-medium">Auto DJ</p>
+                    <p className="text-xs text-gray-500">Event-ready mix</p>
                   </button>
                 </div>
               </CardContent>
@@ -619,6 +691,102 @@ export default function CreatePage() {
               </Card>
             )}
 
+            {/* Auto DJ options */}
+            {mixMode === 'auto_dj' && (
+              <Card className="bg-card/60 backdrop-blur-xl border-primary/20">
+                <CardContent className="pt-6 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-primary" />
+                    <p className="text-sm font-medium text-white">Auto DJ Setup</p>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-gray-400">Event type</label>
+                      <select
+                        value={eventType}
+                        onChange={(e) => setEventType(e.target.value as typeof eventType)}
+                        className="w-full p-3 rounded-lg bg-black/30 border border-white/10 text-white text-sm focus:border-primary outline-none"
+                      >
+                        <option value="default">Any</option>
+                        <option value="wedding">Wedding</option>
+                        <option value="birthday">Birthday</option>
+                        <option value="sweet16">Sweet 16</option>
+                        <option value="club">Club</option>
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-gray-400">Energy arc</label>
+                      <select
+                        value={autoDjEnergyMode}
+                        onChange={(e) => setAutoDjEnergyMode(e.target.value as typeof autoDjEnergyMode)}
+                        className="w-full p-3 rounded-lg bg-black/30 border border-white/10 text-white text-sm focus:border-primary outline-none"
+                      >
+                        <option value="steady">Steady</option>
+                        <option value="build">Build to peak</option>
+                        <option value="wave">Waves</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-gray-400">Transition style</label>
+                      <select
+                        value={autoDjTransitionStyle}
+                        onChange={(e) => setAutoDjTransitionStyle(e.target.value as typeof autoDjTransitionStyle)}
+                        className="w-full p-3 rounded-lg bg-black/30 border border-white/10 text-white text-sm focus:border-primary outline-none"
+                      >
+                        <option value="smooth">Smooth</option>
+                        <option value="drop">Drop punch</option>
+                        <option value="energy">Energy</option>
+                        <option value="cut">Hard cut</option>
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-gray-400">Target BPM (optional)</label>
+                      <input
+                        type="number"
+                        min={60}
+                        max={200}
+                        value={autoDjTargetBpm ?? ''}
+                        onChange={(e) => setAutoDjTargetBpm(e.target.value ? Number(e.target.value) : null)}
+                        className="w-full p-3 rounded-lg bg-black/30 border border-white/10 text-white text-sm focus:border-primary outline-none"
+                        placeholder="e.g. 126"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={preferStems}
+                        onChange={(e) => setPreferStems(e.target.checked)}
+                        className="h-4 w-4 accent-primary"
+                      />
+                      <div>
+                        <p className="text-sm text-white">Prefer stems for transitions</p>
+                        <p className="text-xs text-gray-500">Uses vocals+instrumental stems when available</p>
+                      </div>
+                    </label>
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={keepOrder}
+                        onChange={(e) => setKeepOrder(e.target.checked)}
+                        className="h-4 w-4 accent-primary"
+                      />
+                      <div>
+                        <p className="text-sm text-white">Keep my track order</p>
+                        <p className="text-xs text-gray-500">Otherwise we will reorder for smoother flow</p>
+                      </div>
+                    </label>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Preview + surprise me */}
             <Card className="bg-card/60 backdrop-blur-xl border-white/10">
               <CardContent className="pt-6 space-y-3">
@@ -750,7 +918,7 @@ export default function CreatePage() {
                             </p>
                         )}
                       </>
-                    ) : (
+                    ) : mixMode === 'stem_mashup' ? (
                       <>
                         <Button 
                             className="w-full h-14 text-lg font-bold relative overflow-hidden group" 
@@ -776,6 +944,35 @@ export default function CreatePage() {
                         {(!vocalTrackId || !instrumentalTrackId) && (
                             <p className="text-xs text-center mt-3 text-gray-500">
                             * Select both vocal and instrumental tracks above
+                            </p>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <Button 
+                            className="w-full h-14 text-lg font-bold relative overflow-hidden group" 
+                            variant="default"
+                            onClick={handleGenerateAutoDjMix}
+                            disabled={isGenerating || selectedTrackIds.length < 2}
+                        >
+                            <div className="absolute inset-0 bg-gradient-to-r from-primary via-orange-400 to-pink-500 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                            <span className="relative z-10 flex items-center justify-center">
+                            {isGenerating ? (
+                                <>
+                                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-3" />
+                                Building Auto DJ mix...
+                                </>
+                            ) : (
+                                <>
+                                <Zap className="w-5 h-5 mr-2 fill-white" />
+                                Create Auto DJ Mix
+                                </>
+                            )}
+                            </span>
+                        </Button>
+                        {selectedTrackIds.length < 2 && (
+                            <p className="text-xs text-center mt-3 text-gray-500">
+                            * Select at least 2 analyzed tracks
                             </p>
                         )}
                       </>

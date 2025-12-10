@@ -216,15 +216,43 @@ export function detectCuePoints(trackInfo: TrackInfo): AutoCuePoints {
   const outro = findSection(structure, ['outro']);
 
   let mixIn = 0;
-  if (intro?.end) {
+  let mixInSource = 'default';
+  
+  // Check intro end (use != null to handle 0 values correctly)
+  if (intro && intro.end != null && intro.end > 0) {
     mixIn = snapToPhraseBoundary(intro.end, 8, barDuration);
-  } else if (verse?.start) {
+    mixInSource = 'intro_end';
+  } else if (verse && verse.start != null && verse.start > 0) {
     mixIn = snapToPhraseBoundary(verse.start, 8, barDuration);
-  } else if (buildup?.start) {
+    mixInSource = 'verse_start';
+  } else if (buildup && buildup.start != null && buildup.start > 0) {
     mixIn = snapToPhraseBoundary(buildup.start, 8, barDuration);
+    mixInSource = 'buildup_start';
   } else {
+    // Fallback: skip first 10% of track or 16 bars, whichever is smaller
     mixIn = Math.min(16 * barDuration, duration * 0.1);
+    mixInSource = 'fallback';
   }
+  
+  // Ensure mixIn is at least a few seconds in (skip very short intros)
+  if (mixIn < 4 && duration > 60) {
+    mixIn = Math.min(16 * barDuration, duration * 0.1);
+    mixInSource = 'fallback_minimum';
+  }
+  
+  log('info', 'autoDj.cuePoints.detected', {
+    trackId: trackInfo.id,
+    bpm,
+    duration,
+    barDuration: barDuration.toFixed(2),
+    structureSections: structure.length,
+    hasIntro: !!intro,
+    introEnd: intro?.end,
+    hasVerse: !!verse,
+    verseStart: verse?.start,
+    mixIn: mixIn.toFixed(2),
+    mixInSource,
+  });
 
   const dropPoint = drop?.start ?? trackInfo.dropMoments?.[0] ?? null;
   const breakdownPoint = breakdown?.start ?? null;
@@ -300,6 +328,14 @@ function selectMixInPoint(
   }
 
   if (context.overlapDuration < 8 * barDuration) {
+    log('info', 'autoDj.mixInPoint.selected', {
+      trackId: incomingTrack.id,
+      point: cuePoints.mixIn,
+      strategy: 'post_intro',
+      overlapDuration: context.overlapDuration,
+      barDuration,
+      threshold: 8 * barDuration,
+    });
     return {
       point: cuePoints.mixIn,
       strategy: 'post_intro',
@@ -309,6 +345,14 @@ function selectMixInPoint(
   }
 
   if (context.overlapDuration >= 16 * barDuration) {
+    log('info', 'autoDj.mixInPoint.selected', {
+      trackId: incomingTrack.id,
+      point: 0,
+      strategy: 'intro',
+      overlapDuration: context.overlapDuration,
+      barDuration,
+      threshold: 16 * barDuration,
+    });
     return {
       point: 0,
       strategy: 'intro',
@@ -644,7 +688,18 @@ export async function planAutoDjMix(trackInfos: TrackInfo[], config: AutoDjConfi
 
     let incomingCuePoints = to.cuePoints ?? cueCache.get(to.id) ?? null;
     let newlyDetectedCuePoints = false;
-    if (!incomingCuePoints) {
+    
+    // Re-detect if no cue points OR if stored mixIn is suspiciously low (likely old bad data)
+    const needsRedetection = !incomingCuePoints || 
+      (incomingCuePoints.mixIn < 4 && Number(to.durationSeconds) > 60);
+    
+    if (needsRedetection) {
+      log('info', 'autoDj.cuePoints.redetecting', {
+        trackId: to.id,
+        reason: !incomingCuePoints ? 'no_cue_points' : 'low_mixIn',
+        oldMixIn: incomingCuePoints?.mixIn,
+        duration: to.durationSeconds,
+      });
       incomingCuePoints = detectCuePoints(to);
       newlyDetectedCuePoints = true;
       cueCache.set(to.id, incomingCuePoints);

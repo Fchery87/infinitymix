@@ -15,6 +15,10 @@ const OUTPUT_SAMPLE_RATE = 44100;
 const OUTPUT_CHANNELS = 2;
 const OUTPUT_FORMAT = 'mp3';
 
+if (ffmpegStatic) {
+  ffmpeg.setFfmpegPath(ffmpegStatic as string);
+}
+
 export type AutoDjEnergyMode = 'steady' | 'build' | 'wave';
 export type AutoDjEventType = 'wedding' | 'birthday' | 'sweet16' | 'club' | 'default';
 export type AutoDjTransitionStyle = 'smooth' | 'drop' | 'energy' | 'cut';
@@ -24,6 +28,33 @@ const CROSSFADE_PRESETS: Record<AutoDjTransitionStyle, { duration: number; curve
   drop: { duration: 0.5, curve1: 'exp', curve2: 'log' },
   cut: { duration: 0, curve1: 'nofade', curve2: 'nofade' },
   energy: { duration: 2, curve1: 'qsin', curve2: 'qsin' },
+};
+
+type PhraseLength = 8 | 16 | 32;
+
+export type MixPoint = {
+  outStart: number;
+  inStart: number;
+  overlapSeconds: number;
+  phraseAligned: boolean;
+  outSection?: string;
+  inSection?: string;
+  warnings?: string[];
+};
+
+const STRUCTURE_RULES = {
+  mixOutAllowed: ['outro', 'breakdown', 'verse'],
+  mixOutForbidden: ['drop', 'chorus', 'buildup'],
+  mixInAllowed: ['intro', 'buildup', 'verse'],
+  mixInForbidden: ['drop', 'chorus'],
+};
+
+const GENRE_COMPATIBILITY: Record<string, string[]> = {
+  house: ['tech_house', 'deep_house', 'disco', 'nu_disco', 'uk_garage'],
+  techno: ['tech_house', 'minimal', 'industrial', 'acid'],
+  hip_hop: ['trap', 'rnb', 'dancehall', 'afrobeats'],
+  pop: ['dance_pop', 'synth_pop', 'disco', 'rnb'],
+  dnb: ['jungle', 'liquid', 'neurofunk'],
 };
 
 type TrackInfo = NonNullable<Awaited<ReturnType<typeof getTrackInfoForMixing>>>;
@@ -44,6 +75,16 @@ export type AutoDjConfig = {
   keepOrder?: boolean;
   preferStems?: boolean;
   eventType?: AutoDjEventType;
+  enableFilterSweep?: boolean;
+  tempoRampSeconds?: number;
+};
+
+export type TransitionPreviewConfig = {
+  trackAId: string;
+  trackBId: string;
+  mixPoint: MixPoint;
+  transitionStyle?: AutoDjTransitionStyle;
+  targetBpm?: number;
 };
 
 export type PlannedTransition = {
@@ -54,13 +95,26 @@ export type PlannedTransition = {
   beatOffsetSeconds: number;
   curve1: string;
   curve2: string;
+  mixPoint: MixPoint;
+  vocalCollision?: VocalCollision;
+  bpmDiff?: number;
+  suggestedType?: 'standard' | 'instrumental_bridge' | 'filter_sweep' | 'tempo_ramp';
 };
 
 export type AutoDjPlan = {
   order: string[];
   targetBpm: number;
   transitions: PlannedTransition[];
+  quality?: MixQualityReport;
 };
+
+type MixQualityReport = {
+  overallScore: number;
+  transitionScores: { index: number; score: number; issues: string[] }[];
+  suggestions: string[];
+};
+
+type VocalCollision = { collision: boolean; severity: 'none' | 'minor' | 'major' };
 
 function buildAtempoChain(ratio: number) {
   const filters: string[] = [];
@@ -96,6 +150,181 @@ function clampTempoRatio(value: number) {
   return Math.min(1.33, Math.max(0.75, Number(value.toFixed(3))));
 }
 
+function applyTempoRamp(tempoRatio: number, rampSeconds: number | undefined): string {
+  if (!rampSeconds || rampSeconds <= 0 || Math.abs(tempoRatio - 1) < 0.01) {
+    return buildAtempoChain(tempoRatio);
+  }
+  const clamped = Math.min(1.33, Math.max(0.75, tempoRatio));
+  return `atempo='1+(${clamped.toFixed(3)}-1)*min(t/${rampSeconds.toFixed(2)},1)'`;
+}
+
+function getBarDuration(targetBpm: number) {
+  const bpm = Number.isFinite(targetBpm) && targetBpm > 0 ? targetBpm : 120;
+  return (60 / bpm) * 4;
+}
+
+function snapToPhraseBoundary(value: number, phraseLength: PhraseLength, barDuration: number) {
+  const phraseSeconds = phraseLength * barDuration;
+  if (!Number.isFinite(value) || !Number.isFinite(phraseSeconds) || phraseSeconds <= 0) return 0;
+  return Math.max(0, Math.round(value / phraseSeconds) * phraseSeconds);
+}
+
+function isVocalSection(label: string | undefined) {
+  if (!label) return false;
+  const vocalish = ['verse', 'chorus', 'buildup', 'bridge', 'hook'];
+  return vocalish.includes(label.toLowerCase());
+}
+
+function checkGenreCompatibility(genreA: string | undefined, genreB: string | undefined): { compatible: boolean; distance: number } {
+  if (!genreA || !genreB) return { compatible: true, distance: 0 };
+  if (genreA === genreB) return { compatible: true, distance: 0 };
+  if (GENRE_COMPATIBILITY[genreA]?.includes(genreB)) return { compatible: true, distance: 1 };
+  if (GENRE_COMPATIBILITY[genreB]?.includes(genreA)) return { compatible: true, distance: 1 };
+  return { compatible: false, distance: 3 };
+}
+
+function detectVocalCollision(trackA: TrackInfo, trackB: TrackInfo, mixPoint: MixPoint, targetBpm: number): VocalCollision {
+  const barDuration = getBarDuration(targetBpm);
+  const overlap = mixPoint.overlapSeconds ?? 0;
+  if (overlap <= 0) return { collision: false, severity: 'none' };
+
+  const aLabel = getStructureAt(trackA, mixPoint.outStart);
+  const bLabel = getStructureAt(trackB, mixPoint.inStart);
+  if (isVocalSection(aLabel) && isVocalSection(bLabel)) {
+    if (overlap > 8 * barDuration) return { collision: true, severity: 'major' };
+    return { collision: true, severity: 'minor' };
+  }
+  return { collision: false, severity: 'none' };
+}
+
+function suggestTransitionType(vocalCollision: VocalCollision | undefined, bpmDiff: number | undefined): PlannedTransition['suggestedType'] {
+  if (vocalCollision?.severity === 'major') return 'instrumental_bridge';
+  if (bpmDiff && bpmDiff > 8) return 'tempo_ramp';
+  return 'standard';
+}
+
+function getStructureAt(track: TrackInfo | undefined, position: number): string | undefined {
+  if (!track?.structure?.length || !Number.isFinite(position)) return undefined;
+  const found = track.structure.find((s) => position >= s.start && position < s.end);
+  return found?.label;
+}
+
+function findNextAllowedMixOut(track: TrackInfo | undefined, start: number, barDuration: number) {
+  if (!track?.structure?.length) return snapToPhraseBoundary(start + 8 * barDuration, 8, barDuration);
+  const segments = [...track.structure].sort((a, b) => a.start - b.start);
+  const nextAllowed = segments.find((s) => s.start >= start && STRUCTURE_RULES.mixOutAllowed.includes(s.label));
+  if (nextAllowed) {
+    return snapToPhraseBoundary(nextAllowed.start, 8, barDuration);
+  }
+  const lastEnd = segments.at(-1)?.end ?? start;
+  return snapToPhraseBoundary(Math.max(start, lastEnd - 8 * barDuration), 8, barDuration);
+}
+
+function findPhraseAlignedMixPoint(trackA: TrackInfo, trackB: TrackInfo, targetBpm: number): MixPoint {
+  const barDuration = getBarDuration(targetBpm);
+  const outroStart = trackA.structure?.find((s) => s.label === 'outro')?.start ?? Math.max(0, (Number(trackA.durationSeconds) || 0) - 32 * barDuration);
+  const snappedOutro = snapToPhraseBoundary(outroStart, 8, barDuration);
+  const introEnd = trackB.structure?.find((s) => s.label === 'intro')?.end ?? 16 * barDuration;
+  const overlapBars = Math.min(16, Math.max(4, Math.round(introEnd / barDuration)));
+  const mixPoint: MixPoint = {
+    outStart: snappedOutro,
+    inStart: 0,
+    overlapSeconds: overlapBars * barDuration,
+    phraseAligned: true,
+    outSection: getStructureAt(trackA, snappedOutro),
+    inSection: getStructureAt(trackB, 0),
+  };
+  return mixPoint;
+}
+
+function validateMixPoint(trackA: TrackInfo, trackB: TrackInfo, proposed: MixPoint, targetBpm: number): MixPoint {
+  const warnings: string[] = [];
+  const barDuration = getBarDuration(targetBpm);
+  const structureAtOut = getStructureAt(trackA, proposed.outStart);
+  const structureAtIn = getStructureAt(trackB, proposed.inStart);
+
+  if (structureAtOut && STRUCTURE_RULES.mixOutForbidden.includes(structureAtOut)) {
+    const alternative = findNextAllowedMixOut(trackA, proposed.outStart, barDuration);
+    warnings.push(`Adjusted mix-out from ${structureAtOut} to allowed section at ${alternative.toFixed(2)}s`);
+    proposed = { ...proposed, outStart: alternative, phraseAligned: false };
+  }
+
+  if (structureAtIn && STRUCTURE_RULES.mixInForbidden.includes(structureAtIn)) {
+    const introStart = snapToPhraseBoundary(proposed.inStart + 4 * barDuration, 8, barDuration);
+    warnings.push(`Adjusted mix-in away from ${structureAtIn} to ${introStart.toFixed(2)}s`);
+    proposed = { ...proposed, inStart: introStart, phraseAligned: false };
+  }
+
+  return { ...proposed, warnings: warnings.length ? warnings : undefined, outSection: structureAtOut, inSection: structureAtIn };
+}
+
+function buildMixPoint(trackA: TrackInfo, trackB: TrackInfo, targetBpm: number): MixPoint {
+  const base = findPhraseAlignedMixPoint(trackA, trackB, targetBpm);
+  const validated = validateMixPoint(trackA, trackB, base, targetBpm);
+  return validated;
+}
+
+function scoreMixQuality(plan: AutoDjPlan, trackInfos: TrackInfo[], targetBpm: number): MixQualityReport {
+  const transitionScores = plan.transitions.map((t, idx) => {
+    let score = 100;
+    const issues: string[] = [];
+    if (t.bpmDiff && t.bpmDiff > 8) {
+      score -= 15;
+      issues.push(`Large BPM difference (${t.bpmDiff.toFixed(1)} BPM)`);
+    }
+    if (t.vocalCollision?.severity === 'major') {
+      score -= 25;
+      issues.push('Vocal collision detected');
+    } else if (t.vocalCollision?.severity === 'minor') {
+      score -= 10;
+      issues.push('Possible vocal collision');
+    }
+    if (!t.mixPoint.phraseAligned) {
+      score -= 5;
+      issues.push('Not phrase-aligned');
+    } else {
+      score += 3;
+    }
+
+    const from = trackInfos.find((ti) => ti.id === t.fromId);
+    const to = trackInfos.find((ti) => ti.id === t.toId);
+    const fromBpm = from?.bpm ?? targetBpm;
+    const toBpm = to?.bpm ?? targetBpm;
+    const bpmDiff = Math.abs((fromBpm || targetBpm) - (toBpm || targetBpm));
+    if (bpmDiff > 10) {
+      score -= 10;
+      issues.push('High BPM delta between tracks');
+    }
+
+    const genre = checkGenreCompatibility((from as { genre?: string } | undefined)?.genre, (to as { genre?: string } | undefined)?.genre);
+    if (!genre.compatible && genre.distance >= 3) {
+      score -= 10;
+      issues.push('Genre jump may be jarring');
+    }
+
+    return { index: idx, score: Math.max(0, Math.min(100, score)), issues };
+  });
+
+  const overallScore = transitionScores.length
+    ? transitionScores.reduce((sum, s) => sum + s.score, 0) / transitionScores.length
+    : 0;
+
+  const suggestions: string[] = [];
+  if (overallScore < 80) suggestions.push('Consider reordering to reduce BPM deltas');
+  if (transitionScores.some((t) => t.issues.some((i) => i.includes('vocal')))) suggestions.push('Try instrumental bridge to avoid vocal collisions');
+  if (transitionScores.some((t) => t.issues.some((i) => i.includes('phrase')))) suggestions.push('Re-run with phrase alignment enforced');
+  if (transitionScores.some((t) => t.issues.some((i) => i.includes('Genre')))) suggestions.push('Consider adjacent-genre ordering');
+
+  return { overallScore, transitionScores, suggestions };
+}
+
+function adjustFadeForEvent(eventType: AutoDjEventType | undefined, baseFade: number) {
+  if (!eventType) return baseFade;
+  if (eventType === 'wedding' || eventType === 'birthday') return Math.min(8, baseFade + 1.5);
+  if (eventType === 'club') return Math.max(1, baseFade - 0.5);
+  return baseFade;
+}
+
 async function loadTrackBuffers(trackIds: string[]): Promise<TrackBuffer[]> {
   const storage = await getStorage();
   if (!storage.getFile) {
@@ -116,6 +345,81 @@ async function loadTrackBuffers(trackIds: string[]): Promise<TrackBuffer[]> {
     buffers.push({ id: record.id, buffer: fetched.buffer, mimeType: fetched.mimeType || record.mimeType || 'audio/mpeg' });
   }
   return buffers;
+}
+
+export async function renderTransitionPreview(config: TransitionPreviewConfig): Promise<{ audioUrl: string; durationSeconds: number; transitionStartAt: number }> {
+  if (!ffmpegStatic) {
+    throw new Error('ffmpeg-static binary not available for preview');
+  }
+
+  const trackInfos = await Promise.all([getTrackInfoForMixing(config.trackAId), getTrackInfoForMixing(config.trackBId)]);
+  const [trackAInfo, trackBInfo] = trackInfos;
+  if (!trackAInfo || !trackBInfo) throw new Error('Track info missing for preview');
+
+  const buffers = await loadTrackBuffers([config.trackAId, config.trackBId]);
+  if (buffers.length !== 2) throw new Error('Unable to load both tracks for preview');
+
+  const storage = await getStorage();
+
+  const tempFs = await import('fs/promises');
+  const os = await import('os');
+  const path = await import('path');
+
+  const tempDir = os.tmpdir();
+  const tempFiles: string[] = [];
+  try {
+    buffers.forEach((track, idx) => {
+      const ext = track.mimeType.includes('wav') ? '.wav' : '.mp3';
+      const tempPath = path.join(tempDir, `preview-${Date.now()}-${idx}${ext}`);
+      tempFiles.push(tempPath);
+    });
+    await Promise.all(tempFiles.map((p, idx) => tempFs.writeFile(p, buffers[idx].buffer)));
+
+    const transitionStyle = config.transitionStyle ?? 'smooth';
+    const preset = CROSSFADE_PRESETS[transitionStyle];
+    const targetBpm = config.targetBpm ?? (trackAInfo.bpm ?? trackBInfo.bpm ?? 120);
+    const mixPoint = config.mixPoint;
+    const overlapSeconds = Math.max(1, Math.min(mixPoint.overlapSeconds ?? preset.duration, 30));
+
+    const previewDuration = 60;
+    const command = ffmpeg();
+    tempFiles.forEach((file) => command.input(file));
+
+    const filters: string[] = [];
+    const firstTrimStart = Math.max(0, (Number(trackAInfo.durationSeconds) || 120) - 30);
+    const secondTrimEnd = Math.min(30, Number(trackBInfo.durationSeconds) || 30);
+
+    const aTempo = buildAtempoChain(clampTempoRatio(calculateTempoRatio(trackAInfo.bpm, targetBpm)));
+    const bTempo = buildAtempoChain(clampTempoRatio(calculateTempoRatio(trackBInfo.bpm, targetBpm)));
+
+    const aChain = ['loudnorm=I=-14:TP=-1:LRA=11', aTempo, `atrim=start=${firstTrimStart.toFixed(2)}`, 'asetpts=PTS-STARTPTS'].filter(Boolean).join(',');
+    const bChain = ['loudnorm=I=-14:TP=-1:LRA=11', bTempo, `atrim=end=${secondTrimEnd.toFixed(2)}`, 'asetpts=PTS-STARTPTS'].filter(Boolean).join(',');
+
+    filters.push(`[0:a]${aChain}[pa]`);
+    filters.push(`[1:a]${bChain}[pb]`);
+    filters.push(`[pa][pb]acrossfade=d=${overlapSeconds.toFixed(2)}:c1=${preset.curve1}:c2=${preset.curve2}[mixed]`);
+
+    command
+      .complexFilter(filters, 'mixed')
+      .outputOptions([`-ac ${OUTPUT_CHANNELS}`, `-ar ${OUTPUT_SAMPLE_RATE}`, `-t ${previewDuration}`, '-b:a 192k'])
+      .format(OUTPUT_FORMAT);
+
+    const chunks: Buffer[] = [];
+    const buffer = await new Promise<Buffer>((resolve, reject) => {
+      command.on('error', reject);
+      const out = command.pipe();
+      out.on('data', (c) => chunks.push(c));
+      out.on('end', () => resolve(Buffer.concat(chunks)));
+      out.on('error', reject);
+    });
+
+    if (!buffer.length) throw new Error('Preview rendering produced empty output');
+
+    const url = await storage.uploadFile(buffer, `preview-${config.trackAId}-${config.trackBId}.${OUTPUT_FORMAT}`, 'audio/mpeg');
+    return { audioUrl: url, durationSeconds: previewDuration, transitionStartAt: 30 - overlapSeconds };
+  } finally {
+    await Promise.all(tempFiles.map((p) => tempFs.unlink(p).catch(() => {})));
+  }
 }
 
 export async function planAutoDjMix(trackInfos: TrackInfo[], config: AutoDjConfig): Promise<AutoDjPlan> {
@@ -150,6 +454,8 @@ export async function planAutoDjMix(trackInfos: TrackInfo[], config: AutoDjConfi
   for (let i = 0; i < ordered.length - 1; i++) {
     const from = trackInfos.find((t) => t.id === ordered[i]);
     const to = trackInfos.find((t) => t.id === ordered[i + 1]);
+    if (!from || !to) continue;
+
     const fromBpm = from?.bpm ? Number(from.bpm) : targetBpm;
     const toBpm = to?.bpm ? Number(to.bpm) : targetBpm;
     const fromRatio = clampTempoRatio(calculateTempoRatio(fromBpm, targetBpm));
@@ -157,19 +463,32 @@ export async function planAutoDjMix(trackInfos: TrackInfo[], config: AutoDjConfi
     const fromGrid = (from?.beatGrid ?? []).map((t) => t / fromRatio);
     const toGrid = (to?.beatGrid ?? []).map((t) => t / toRatio);
     const beatOffset = calculateBeatAlignment(fromGrid, toGrid, targetBpm, 'downbeat');
+    const mixPoint = buildMixPoint(from, to, targetBpm);
+    const presetFade = Math.min(adjustFadeForEvent(config.eventType, config.fadeDurationSeconds ?? preset.duration), 8);
+    const fadeDuration = Math.max(0, Math.min(presetFade, mixPoint.overlapSeconds || presetFade));
+    const vocalCollision = detectVocalCollision(from, to, mixPoint, targetBpm);
+    const bpmDiff = Math.abs((fromBpm || targetBpm) - (toBpm || targetBpm));
+    const suggestedType = suggestTransitionType(vocalCollision, bpmDiff);
 
     transitions.push({
       fromId: ordered[i],
       toId: ordered[i + 1],
       style: transitionStyle,
-      fadeDuration: config.fadeDurationSeconds ?? preset.duration,
+      fadeDuration,
       beatOffsetSeconds: beatOffset,
       curve1: preset.curve1,
       curve2: preset.curve2,
+      mixPoint,
+      vocalCollision,
+      bpmDiff,
+      suggestedType,
     });
   }
 
-  return { order: ordered, targetBpm, transitions };
+  const plan: AutoDjPlan = { order: ordered, targetBpm, transitions };
+  plan.quality = scoreMixQuality(plan, trackInfos, targetBpm);
+
+  return plan;
 }
 
 export async function renderAutoDjMix(
@@ -223,130 +542,207 @@ export async function renderAutoDjMix(
 
     const filters: string[] = [];
     const targetBpm = plan.targetBpm;
-    const numTracks = orderedBuffers.length;
-    const totalDuration = config.targetDurationSeconds;
-    
-    // Calculate crossfade duration
-    const transitionStyle = config.transitionStyle ?? 'smooth';
-    const defaultFade = CROSSFADE_PRESETS[transitionStyle]?.duration ?? 2;
-    const fadeDuration = Math.min(config.fadeDurationSeconds ?? defaultFade, 8);
-    
-    // Calculate segment duration for each track
-    // Total duration = sum of segments - overlaps
-    // With N tracks and (N-1) overlaps of fadeDuration each:
-    // totalDuration = N * segmentDuration - (N-1) * fadeDuration
-    // segmentDuration = (totalDuration + (N-1) * fadeDuration) / N
-    const segmentDuration = numTracks > 1 
-      ? (totalDuration + (numTracks - 1) * fadeDuration) / numTracks
-      : totalDuration;
-    
-    console.log(`🎵 Auto DJ: ${numTracks} tracks, ${totalDuration}s total, ${segmentDuration.toFixed(1)}s per segment, ${fadeDuration}s crossfade`);
+    const fallbackDuration = Math.max(30, config.targetDurationSeconds / Math.max(1, orderedBuffers.length));
 
-    // Process each track: tempo adjust, trim to segment length
-    orderedBuffers.forEach((track, idx) => {
+    type TrackPlaybackPlan = {
+      id: string;
+      tempoRatio: number;
+      adjustedDuration: number;
+      maxSegmentDuration: number;
+      startOffset: number;
+      startTime: number;
+      fadeInDuration: number;
+      fadeOutStart: number | null;
+      fadeOutDuration: number;
+      trimEnd: number;
+    };
+
+    // Calculate segment duration for each track based on target duration
+    // Formula: totalDuration = N * segmentDuration - (N-1) * fadeDuration
+    // So: segmentDuration = (totalDuration + (N-1) * fadeDuration) / N
+    const numTracks = orderedBuffers.length;
+    const defaultFade = CROSSFADE_PRESETS[config.transitionStyle ?? 'smooth']?.duration ?? 4;
+    const avgFade = plan.transitions.length > 0
+      ? plan.transitions.reduce((sum, t) => sum + (t.fadeDuration || defaultFade), 0) / plan.transitions.length
+      : defaultFade;
+    const targetSegmentDuration = numTracks > 1
+      ? (config.targetDurationSeconds + (numTracks - 1) * avgFade) / numTracks
+      : config.targetDurationSeconds;
+
+    log('info', 'autoDj.segment.calc', {
+      numTracks,
+      targetDuration: config.targetDurationSeconds,
+      avgFade: avgFade.toFixed(2),
+      targetSegmentDuration: targetSegmentDuration.toFixed(2),
+    });
+
+    const playbackPlans: TrackPlaybackPlan[] = orderedBuffers.map((track, idx) => {
       const info = trackInfos.find((t) => t.id === track.id);
       const bpm = info?.bpm ? Number(info.bpm) : targetBpm;
       const tempoRatio = clampTempoRatio(calculateTempoRatio(bpm, targetBpm));
-      const atempo = buildAtempoChain(tempoRatio);
+      const rawDuration = info?.durationSeconds ? Number(info.durationSeconds) : fallbackDuration;
+      const adjustedDuration = rawDuration / (tempoRatio || 1);
+      const validAdjustedDuration = Number.isFinite(adjustedDuration) && adjustedDuration > 0 ? adjustedDuration : fallbackDuration;
       
-      const chainParts: string[] = [];
-      if (atempo) chainParts.push(atempo);
-      // Trim each track to segment duration
-      chainParts.push(`atrim=0:${segmentDuration.toFixed(2)}`);
-      chainParts.push('asetpts=PTS-STARTPTS');
-      chainParts.push('volume=1');
+      // Each track is limited to its segment duration (but can be shorter if track is shorter)
+      const maxSegment = Math.min(validAdjustedDuration, targetSegmentDuration);
       
-      filters.push(`[${idx}:a]${chainParts.join(',')}[t${idx}]`);
+      return {
+        id: track.id,
+        tempoRatio,
+        adjustedDuration: validAdjustedDuration,
+        maxSegmentDuration: maxSegment,
+        startOffset: 0,
+        startTime: idx === 0 ? 0 : 0,
+        fadeInDuration: idx === 0 ? 0 : (plan.transitions[idx - 1]?.fadeDuration ?? avgFade),
+        fadeOutStart: null,
+        fadeOutDuration: 0,
+        trimEnd: maxSegment,
+      };
     });
 
-    if (numTracks === 1) {
-      filters.push(`[t0]anull[mixed]`);
-    } else {
-      // For DJ-style mixing, we delay each track and use amix with crossfade envelopes
-      // Track 0: starts at 0
-      // Track 1: starts at (segmentDuration - fadeDuration)
-      // Track 2: starts at 2*(segmentDuration - fadeDuration)
-      // etc.
+    // Build timing based on segment durations with crossfade overlaps
+    // Track 0: plays 0 to segmentDuration
+    // Track 1: starts at (segmentDuration - fadeDuration), plays segmentDuration
+    // Track 2: starts at 2*(segmentDuration - fadeDuration), etc.
+    for (let i = 0; i < playbackPlans.length; i++) {
+      const currentPlan = playbackPlans[i];
+      const transition = i > 0 ? plan.transitions[i - 1] : null;
+      const fadeDuration = transition?.fadeDuration ?? avgFade;
       
-      const stepDuration = segmentDuration - fadeDuration;
-      
-      // Apply delays and fades to each track
-      for (let i = 0; i < numTracks; i++) {
-        const startTime = i * stepDuration;
-        const delayMs = Math.round(startTime * 1000);
-        
-        // Build fade envelope: fade in at start (except track 0), fade out at end (except last track)
-        const fadeFilters: string[] = [];
-        
-        // Fade in (except first track)
-        if (i > 0) {
-          fadeFilters.push(`afade=t=in:st=0:d=${fadeDuration}`);
-        }
-        
-        // Fade out (except last track)
-        if (i < numTracks - 1) {
-          const fadeOutStart = segmentDuration - fadeDuration;
-          fadeFilters.push(`afade=t=out:st=${fadeOutStart.toFixed(2)}:d=${fadeDuration}`);
-        }
-        
-        let chain = `[t${i}]`;
-        if (fadeFilters.length > 0) {
-          chain += fadeFilters.join(',');
-          chain += `[f${i}]`;
-          filters.push(chain);
-          chain = `[f${i}]`;
-        } else {
-          chain = `[t${i}]`;
-        }
-        
-        // Apply delay
-        if (delayMs > 0) {
-          filters.push(`${chain}adelay=${delayMs}|${delayMs}[d${i}]`);
-        } else {
-          filters.push(`${chain}anull[d${i}]`);
-        }
+      if (i === 0) {
+        // First track starts at 0
+        currentPlan.startTime = 0;
+        currentPlan.startOffset = 0;
+        currentPlan.fadeInDuration = 0;
+      } else {
+        // Subsequent tracks start at previous track's fade-out point
+        const prevPlan = playbackPlans[i - 1];
+        const stepDuration = prevPlan.maxSegmentDuration - fadeDuration;
+        currentPlan.startTime = prevPlan.startTime + stepDuration;
+        currentPlan.startOffset = 0;
+        currentPlan.fadeInDuration = fadeDuration;
       }
       
-      // Mix all delayed/faded tracks together
-      const mixInputs = Array.from({ length: numTracks }, (_, i) => `[d${i}]`).join('');
-      filters.push(`${mixInputs}amix=inputs=${numTracks}:duration=longest:normalize=0[mixed]`);
+      // Set fade out (except for last track)
+      if (i < playbackPlans.length - 1) {
+        const nextTransition = plan.transitions[i];
+        const nextFade = nextTransition?.fadeDuration ?? avgFade;
+        currentPlan.fadeOutStart = currentPlan.maxSegmentDuration - nextFade;
+        currentPlan.fadeOutDuration = nextFade;
+        currentPlan.trimEnd = currentPlan.maxSegmentDuration;
+      } else {
+        // Last track: no fade out, play to fill remaining duration
+        const remaining = Math.max(currentPlan.maxSegmentDuration, config.targetDurationSeconds - currentPlan.startTime);
+        currentPlan.fadeOutStart = null;
+        currentPlan.fadeOutDuration = 0;
+        currentPlan.trimEnd = Math.min(currentPlan.adjustedDuration, remaining);
+      }
     }
 
-    const safeDuration = Math.max(30, Math.round(config.targetDurationSeconds));
-
-    command
-      .complexFilter(filters, 'mixed')
-      .outputOptions([
-        `-ac ${OUTPUT_CHANNELS}`,
-        `-ar ${OUTPUT_SAMPLE_RATE}`,
-        `-t ${safeDuration}`,
-        '-b:a 192k',
-      ])
-      .format(OUTPUT_FORMAT);
-
-    const chunks: Buffer[] = [];
-
-    const result = await new Promise<Buffer>((resolve, reject) => {
-      command.on('start', (cmdline) => {
-        log('info', 'autoDj.ffmpeg.start', { cmdline });
-      });
-
-      command.on('stderr', (stderrLine) => {
-        if (stderrLine.includes('Error') || stderrLine.includes('error')) {
-          log('error', 'autoDj.ffmpeg.stderr', { stderrLine });
-        }
-      });
-
-      command.on('error', (err) => {
-        log('error', 'autoDj.ffmpeg.error', { error: err.message });
-        reject(err);
-      });
-
-      const output = command.pipe();
-      output.on('data', (chunk) => chunks.push(chunk));
-      output.on('end', () => resolve(Buffer.concat(chunks)));
-      output.on('error', (err) => reject(err));
+    playbackPlans.forEach((plan) => {
+      const info = trackInfos.find((t) => t.id === plan.id);
+      const mixOutSection = info ? getStructureAt(info, (plan.startOffset + (plan.fadeOutStart ?? 0)) * (plan.tempoRatio || 1)) : undefined;
+      const logPayload = {
+        trackId: plan.id,
+        startTime: Number(plan.startTime.toFixed(2)),
+        startOffset: Number(plan.startOffset.toFixed(2)),
+        fadeIn: Number(plan.fadeInDuration.toFixed(2)),
+        fadeOutStart: Number((plan.fadeOutStart ?? 0).toFixed(2)),
+        fadeOutDuration: Number(plan.fadeOutDuration.toFixed(2)),
+        trimEnd: Number(plan.trimEnd.toFixed(2)),
+        mixOutSection,
+      };
+      log('info', 'autoDj.plan.track', logPayload);
     });
+
+    // Build FFmpeg filter graph using phrase-aware timings
+    playbackPlans.forEach((plan, idx) => {
+      const chainParts: string[] = [];
+      chainParts.push('loudnorm=I=-14:TP=-1:LRA=11');
+      const atempo = applyTempoRamp(plan.tempoRatio, config.tempoRampSeconds);
+      if (atempo) chainParts.push(atempo);
+
+      const trimEnd = Math.max(plan.startOffset + 0.1, plan.trimEnd);
+      chainParts.push(`atrim=start=${plan.startOffset.toFixed(3)}:end=${trimEnd.toFixed(3)}`);
+      chainParts.push('asetpts=PTS-STARTPTS');
+
+      if (plan.fadeInDuration > 0) {
+        chainParts.push(`afade=t=in:st=0:d=${plan.fadeInDuration.toFixed(3)}`);
+      }
+
+      if (plan.fadeOutDuration > 0 && plan.fadeOutStart !== null) {
+        const fadeOutStart = Math.min(plan.fadeOutStart, Math.max(0, trimEnd - plan.fadeOutDuration));
+        chainParts.push(`afade=t=out:st=${fadeOutStart.toFixed(3)}:d=${plan.fadeOutDuration.toFixed(3)}`);
+      }
+
+      if (config.enableFilterSweep && plan.fadeOutDuration > 0) {
+        const sweep = `highpass=f='20+2000*t/${Math.max(plan.fadeOutDuration, 0.5).toFixed(3)}':p=1.2`;
+        chainParts.push(sweep);
+      }
+
+      chainParts.push('volume=1');
+      filters.push(`[${idx}:a]${chainParts.join(',')}[p${idx}]`);
+
+      const delayMs = Math.max(0, Math.round(plan.startTime * 1000));
+      filters.push(`[p${idx}]adelay=${delayMs}|${delayMs}[d${idx}]`);
+    });
+
+    const mixInputs = playbackPlans.map((_, i) => `[d${i}]`).join('');
+    filters.push(`${mixInputs}amix=inputs=${playbackPlans.length}:duration=longest:normalize=0[mixed]`);
+
+    const estimatedEnd = playbackPlans.reduce((max, plan) => Math.max(max, plan.startTime + plan.trimEnd), 0);
+    const safeDuration = Math.max(30, Math.round(Math.max(config.targetDurationSeconds, estimatedEnd)));
+
+    const executeMix = async (filterGraph: string[], duration: number) => {
+      const cmd = ffmpeg();
+      tempFiles.forEach((file) => cmd.input(file));
+      cmd
+        .complexFilter(filterGraph, 'mixed')
+        .outputOptions([`-ac ${OUTPUT_CHANNELS}`, `-ar ${OUTPUT_SAMPLE_RATE}`, `-t ${duration}`, '-b:a 192k'])
+        .format(OUTPUT_FORMAT);
+      const chunks: Buffer[] = [];
+      return new Promise<Buffer>((resolve, reject) => {
+        cmd.on('start', (cmdline) => {
+          log('info', 'autoDj.ffmpeg.start', { cmdline });
+        });
+        cmd.on('stderr', (line) => {
+          if (line.includes('Error') || line.includes('error')) {
+            log('error', 'autoDj.ffmpeg.stderr', { stderrLine: line });
+          }
+        });
+        cmd.on('error', (err) => reject(err));
+        const out = cmd.pipe();
+        out.on('data', (c) => chunks.push(c));
+        out.on('end', () => resolve(Buffer.concat(chunks)));
+        out.on('error', (err) => reject(err));
+      });
+    };
+
+    const buildFallbackFilters = () => {
+      const fallbackFilters: string[] = [];
+      const fade = Math.min(4, config.fadeDurationSeconds ?? 2);
+      const perSegment = plan.order.length > 1 ? config.targetDurationSeconds / plan.order.length : config.targetDurationSeconds;
+      orderedBuffers.forEach((_, idx) => {
+        const eqOut = idx < orderedBuffers.length - 1 ? ',highpass=f=400' : '';
+        const eqIn = idx > 0 ? ',lowpass=f=8000' : '';
+        fallbackFilters.push(`[${idx}:a]atrim=0:${perSegment.toFixed(2)},asetpts=PTS-STARTPTS${eqIn}${eqOut},afade=t=in:st=0:d=${Math.min(fade, perSegment / 2).toFixed(2)},afade=t=out:st=${Math.max(0, perSegment - fade).toFixed(2)}:d=${fade.toFixed(2)}[fb${idx}]`);
+        const delayMs = Math.round(Math.max(0, idx * (perSegment - fade)) * 1000);
+        fallbackFilters.push(`[fb${idx}]adelay=${delayMs}|${delayMs}[fbd${idx}]`);
+      });
+      const mixInputs = orderedBuffers.map((_, i) => `[fbd${i}]`).join('');
+      fallbackFilters.push(`${mixInputs}amix=inputs=${orderedBuffers.length}:duration=longest:normalize=0[mixed]`);
+      return fallbackFilters;
+    };
+
+    let result: Buffer | null = null;
+    try {
+      result = await executeMix(filters, safeDuration);
+    } catch (error) {
+      log('warn', 'autoDj.ffmpeg.fallback', { error: (error as Error).message });
+      const fallbackFilters = buildFallbackFilters();
+      result = await executeMix(fallbackFilters, safeDuration);
+    }
 
     if (!result || result.length === 0) {
       throw new Error('Auto DJ render produced empty output');

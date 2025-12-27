@@ -10,6 +10,8 @@ import { FileUpload } from '@/components/file-upload';
 import { TrackList, Track } from '@/components/track-list';
 import { DurationPicker, DurationPreset } from '@/components/duration-picker';
 import { overallCompatibility, camelotCompatible } from '@/lib/utils/audio-compat';
+import { ProjectSelector } from '@/components/projects/project-selector';
+import { CreateProjectModal } from '@/components/projects/create-project-modal';
 
 type TransitionStyle =
   | 'smooth'
@@ -46,6 +48,10 @@ export default function CreatePage() {
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isSmartMixing, setIsSmartMixing] = useState(false);
   const [transitionStyles, setTransitionStyles] = useState<TransitionStyle[]>([]);
+  
+  // Project-related state
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
   
   // Stem mashup mode
   const [mixMode, setMixMode] = useState<MixMode>('standard');
@@ -125,6 +131,9 @@ export default function CreatePage() {
       try {
         const formData = new FormData();
         Array.from(files).forEach((file) => formData.append('files', file));
+        if (selectedProjectId) {
+          formData.append('projectId', selectedProjectId);
+        }
         const response = await fetch('/api/audio/upload', {
           method: 'POST',
           body: formData,
@@ -191,6 +200,7 @@ export default function CreatePage() {
           inputFileIds: selectedTrackIds,
           durationPreset,
           durationSeconds: targetDuration,
+          projectId: selectedProjectId,
         }),
       });
 
@@ -238,6 +248,7 @@ export default function CreatePage() {
           durationSeconds: durationMap[durationPreset as keyof typeof durationMap],
           beatAlign,
           beatAlignMode,
+          projectId: selectedProjectId,
           crossfade: crossfadeEnabled
             ? {
                 enabled: true,
@@ -287,6 +298,7 @@ export default function CreatePage() {
           preferStems,
           keepOrder,
           eventType,
+          projectId: selectedProjectId,
         }),
       });
 
@@ -426,6 +438,9 @@ export default function CreatePage() {
               </div>
             </Link>
             <nav className="flex items-center space-x-6">
+              <Link href="/projects">
+                <Button variant="ghost" className="text-gray-400 hover:text-white hover:bg-white/5">Projects</Button>
+              </Link>
               <Link href="/mashups">
                 <Button variant="ghost" className="text-gray-400 hover:text-white hover:bg-white/5">My Mashups</Button>
               </Link>
@@ -470,6 +485,15 @@ export default function CreatePage() {
                 onUpload={handleFileUpload} 
                 isUploading={isUploading} 
             />
+            
+            {/* Project Selector */}
+            <ProjectSelector
+              selectedProjectId={selectedProjectId}
+              onProjectChange={setSelectedProjectId}
+              onCreateNew={() => setIsProjectModalOpen(true)}
+              className="mt-4"
+            />
+            
             {isLoadingTracks && (
               <p className="text-sm text-gray-500">Refreshing tracks...</p>
             )}
@@ -1049,6 +1073,12 @@ export default function CreatePage() {
         />
         
       </main>
+      
+      {/* Create Project Modal */}
+      <CreateProjectModal
+        isOpen={isProjectModalOpen}
+        onClose={() => setIsProjectModalOpen(false)}
+      />
     </div>
   );
 }

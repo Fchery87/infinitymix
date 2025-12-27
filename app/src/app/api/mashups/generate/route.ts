@@ -27,7 +27,12 @@ export async function POST(request: NextRequest) {
 
     const requestStarted = Date.now();
     const body = await request.json();
-    const { inputFileIds, durationPreset, mixMode = 'standard' } = mashupGenerateSchema.parse(body);
+    const {
+      inputFileIds,
+      durationPreset,
+      mixMode = 'standard',
+      projectId,
+    } = mashupGenerateSchema.parse(body);
 
     logTelemetry({
       name: 'mashup.generate.requested',
@@ -47,10 +52,12 @@ export async function POST(request: NextRequest) {
         keySignature: uploadedTracks.keySignature,
       })
       .from(uploadedTracks)
-      .where(and(
-        eq(uploadedTracks.userId, user.id),
-        inArray(uploadedTracks.id, inputFileIds)
-      ));
+      .where(
+        and(
+          eq(uploadedTracks.userId, user.id),
+          inArray(uploadedTracks.id, inputFileIds)
+        )
+      );
 
     if (tracks.length !== inputFileIds.length) {
       return NextResponse.json(
@@ -59,7 +66,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const unanalyzedTracks = tracks.filter(t => t.analysisStatus !== 'completed');
+    const unanalyzedTracks = tracks.filter(
+      (t) => t.analysisStatus !== 'completed'
+    );
     if (unanalyzedTracks.length > 0) {
       return NextResponse.json(
         { error: 'Some tracks are still being analyzed' },
@@ -73,7 +82,8 @@ export async function POST(request: NextRequest) {
       '2_minutes': 120,
       '3_minutes': 180,
     };
-    const durationSeconds = durationMap[durationPreset as keyof typeof durationMap];
+    const durationSeconds =
+      durationMap[durationPreset as keyof typeof durationMap];
 
     // Enforce plan quota
     await assertDurationQuota(user.id, durationSeconds);
@@ -89,6 +99,7 @@ export async function POST(request: NextRequest) {
         outputFormat: 'mp3',
         isPublic: false,
         mixMode,
+        projectId: projectId || null,
       })
       .returning({
         id: mashups.id,
@@ -103,11 +114,14 @@ export async function POST(request: NextRequest) {
       });
 
     if (!mashup) {
-      return NextResponse.json({ error: 'Failed to create mashup' }, { status: 500 });
+      return NextResponse.json(
+        { error: 'Failed to create mashup' },
+        { status: 500 }
+      );
     }
 
     // Link mashup to input tracks
-    const trackRelations = inputFileIds.map(trackId => ({
+    const trackRelations = inputFileIds.map((trackId) => ({
       mashupId: mashup.id,
       uploadedTrackId: trackId,
     }));
@@ -117,7 +131,14 @@ export async function POST(request: NextRequest) {
     // Start async generation process (queued)
     void withTelemetry(
       'mashup.generate.render',
-      () => enqueueMix({ type: 'mix', mashupId: mashup.id, inputTrackIds: inputFileIds, durationSeconds, mixMode }),
+      () =>
+        enqueueMix({
+          type: 'mix',
+          mashupId: mashup.id,
+          inputTrackIds: inputFileIds,
+          durationSeconds,
+          mixMode,
+        }),
       {
         mashupId: mashup.id,
         trackCount: inputFileIds.length,
@@ -151,10 +172,14 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('Generate mashup error:', error);
-    logTelemetry({ name: 'mashup.generate.failed', level: 'error', properties: { error: (error as Error)?.message } });
+    logTelemetry({
+      name: 'mashup.generate.failed',
+      level: 'error',
+      properties: { error: (error as Error)?.message },
+    });
     const { reportError } = await import('@/lib/monitoring');
     reportError(error as Error, { scope: 'mashup.generate' });
-    
+
     if (error instanceof ZodError) {
       return NextResponse.json(
         { error: 'Validation failed', details: error.errors },
@@ -162,7 +187,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (error instanceof Error && error.message.toLowerCase().includes('quota')) {
+    if (
+      error instanceof Error &&
+      error.message.toLowerCase().includes('quota')
+    ) {
       return NextResponse.json({ error: error.message }, { status: 402 });
     }
 

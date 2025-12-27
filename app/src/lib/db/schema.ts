@@ -1,11 +1,48 @@
-import { pgTable, uuid, varchar, timestamp, integer, boolean, decimal, text, pgEnum, index, uniqueIndex, jsonb } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  varchar,
+  timestamp,
+  integer,
+  boolean,
+  decimal,
+  text,
+  pgEnum,
+  index,
+  uniqueIndex,
+  jsonb,
+} from 'drizzle-orm/pg-core';
 
 // Enums
-export const uploadStatusEnum = pgEnum('upload_status', ['pending', 'uploaded', 'failed']);
-export const analysisStatusEnum = pgEnum('analysis_status', ['pending', 'analyzing', 'completed', 'failed']);
-export const generationStatusEnum = pgEnum('generation_status', ['pending', 'generating', 'completed', 'failed']);
-export const stemStatusEnum = pgEnum('stem_status', ['pending', 'processing', 'completed', 'failed']);
-export const stemTypeEnum = pgEnum('stem_type', ['vocals', 'drums', 'bass', 'other']);
+export const uploadStatusEnum = pgEnum('upload_status', [
+  'pending',
+  'uploaded',
+  'failed',
+]);
+export const analysisStatusEnum = pgEnum('analysis_status', [
+  'pending',
+  'analyzing',
+  'completed',
+  'failed',
+]);
+export const generationStatusEnum = pgEnum('generation_status', [
+  'pending',
+  'generating',
+  'completed',
+  'failed',
+]);
+export const stemStatusEnum = pgEnum('stem_status', [
+  'pending',
+  'processing',
+  'completed',
+  'failed',
+]);
+export const stemTypeEnum = pgEnum('stem_type', [
+  'vocals',
+  'drums',
+  'bass',
+  'other',
+]);
 export const visibilityEnum = pgEnum('visibility', ['private', 'public']);
 export const stemQualityEnum = pgEnum('stem_quality', ['draft', 'hifi']);
 export const mixModeEnum = pgEnum('mix_mode', [
@@ -18,9 +55,28 @@ export const mixModeEnum = pgEnum('mix_mode', [
   'dynamic_eq',
 ]);
 export const planTierEnum = pgEnum('plan_tier', ['free', 'pro', 'studio']);
-export const collabStatusEnum = pgEnum('collab_status', ['pending', 'accepted', 'declined']);
-export const challengeStatusEnum = pgEnum('challenge_status', ['draft', 'active', 'closed']);
-export const submissionStatusEnum = pgEnum('submission_status', ['pending', 'submitted', 'approved', 'rejected']);
+export const collabStatusEnum = pgEnum('collab_status', [
+  'pending',
+  'accepted',
+  'declined',
+]);
+export const challengeStatusEnum = pgEnum('challenge_status', [
+  'draft',
+  'active',
+  'closed',
+]);
+export const submissionStatusEnum = pgEnum('submission_status', [
+  'pending',
+  'submitted',
+  'approved',
+  'rejected',
+]);
+export const projectStatusEnum = pgEnum('project_status', [
+  'idea',
+  'in_progress',
+  'completed',
+  'archived',
+]);
 
 // Users table - using text for id to support Better Auth's nanoid format
 export const users = pgTable('users', {
@@ -36,72 +92,138 @@ export const users = pgTable('users', {
 });
 
 // Auth tables
-export const accounts = pgTable('accounts', {
-  id: text('id').primaryKey(),
-  accountId: varchar('account_id', { length: 255 }).notNull(),
-  providerId: varchar('provider_id', { length: 255 }).notNull(),
-  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  accessToken: text('access_token'),
-  refreshToken: text('refresh_token'),
-  idToken: text('id_token'),
-  accessTokenExpiresAt: timestamp('access_token_expires_at'),
-  refreshTokenExpiresAt: timestamp('refresh_token_expires_at'),
-  scope: text('scope'),
-  password: varchar('password', { length: 255 }),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  updatedAt: timestamp('updated_at').notNull().defaultNow(),
-}, (table) => ({
-  providerAccountUnique: uniqueIndex('accounts_provider_account_unique').on(table.providerId, table.accountId),
-  userIdIdx: index('idx_accounts_user_id').on(table.userId),
-}));
+export const accounts = pgTable(
+  'accounts',
+  {
+    id: text('id').primaryKey(),
+    accountId: varchar('account_id', { length: 255 }).notNull(),
+    providerId: varchar('provider_id', { length: 255 }).notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    accessToken: text('access_token'),
+    refreshToken: text('refresh_token'),
+    idToken: text('id_token'),
+    accessTokenExpiresAt: timestamp('access_token_expires_at'),
+    refreshTokenExpiresAt: timestamp('refresh_token_expires_at'),
+    scope: text('scope'),
+    password: varchar('password', { length: 255 }),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    providerAccountUnique: uniqueIndex('accounts_provider_account_unique').on(
+      table.providerId,
+      table.accountId
+    ),
+    userIdIdx: index('idx_accounts_user_id').on(table.userId),
+  })
+);
 
-export const sessions = pgTable('sessions', {
-  id: text('id').primaryKey(),
-  expiresAt: timestamp('expires_at').notNull(),
-  token: varchar('token', { length: 255 }).notNull().unique(),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  updatedAt: timestamp('updated_at').notNull().defaultNow(),
-  ipAddress: varchar('ip_address', { length: 255 }),
-  userAgent: text('user_agent'),
-  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-}, (table) => ({
-  userIdIdx: index('idx_sessions_user_id').on(table.userId),
-}));
+export const sessions = pgTable(
+  'sessions',
+  {
+    id: text('id').primaryKey(),
+    expiresAt: timestamp('expires_at').notNull(),
+    token: varchar('token', { length: 255 }).notNull().unique(),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+    ipAddress: varchar('ip_address', { length: 255 }),
+    userAgent: text('user_agent'),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+  },
+  (table) => ({
+    userIdIdx: index('idx_sessions_user_id').on(table.userId),
+  })
+);
 
-export const verifications = pgTable('verifications', {
-  id: text('id').primaryKey(),
-  identifier: varchar('identifier', { length: 255 }).notNull(),
-  value: text('value').notNull(),
-  expiresAt: timestamp('expires_at').notNull(),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  updatedAt: timestamp('updated_at').notNull().defaultNow(),
-}, (table) => ({
-  identifierIdx: index('idx_verifications_identifier').on(table.identifier),
-}));
+export const verifications = pgTable(
+  'verifications',
+  {
+    id: text('id').primaryKey(),
+    identifier: varchar('identifier', { length: 255 }).notNull(),
+    value: text('value').notNull(),
+    expiresAt: timestamp('expires_at').notNull(),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    identifierIdx: index('idx_verifications_identifier').on(table.identifier),
+  })
+);
+
+// Projects table
+export const projects = pgTable(
+  'projects',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 255 }).notNull(),
+    description: text('description'),
+    status: projectStatusEnum('status').notNull().default('in_progress'),
+    coverImageUrl: varchar('cover_image_url', { length: 512 }),
+    color: varchar('color', { length: 7 }).default('#6366f1'), // Default indigo
+    bpmLock: decimal('bpm_lock', { precision: 6, scale: 2 }),
+    keyLock: varchar('key_lock', { length: 20 }),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdIdx: index('idx_projects_user_id').on(table.userId),
+  })
+);
 
 // Uploaded tracks table
 export const uploadedTracks = pgTable('uploaded_tracks', {
   id: uuid('id').primaryKey().defaultRandom(),
-  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  userId: text('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  projectId: uuid('project_id').references(() => projects.id, {
+    onDelete: 'set null',
+  }),
   originalFilename: varchar('original_filename', { length: 255 }).notNull(),
   storageUrl: varchar('storage_url', { length: 512 }).notNull(),
   fileSizeBytes: integer('file_size_bytes').notNull(),
   mimeType: varchar('mime_type', { length: 50 }).notNull(),
   uploadStatus: uploadStatusEnum('upload_status').notNull().default('pending'),
-  analysisStatus: analysisStatusEnum('analysis_status').notNull().default('pending'),
+  analysisStatus: analysisStatusEnum('analysis_status')
+    .notNull()
+    .default('pending'),
   bpm: decimal('bpm', { precision: 5, scale: 2 }),
   keySignature: varchar('key_signature', { length: 20 }),
   camelotKey: varchar('camelot_key', { length: 10 }),
   bpmConfidence: decimal('bpm_confidence', { precision: 4, scale: 3 }),
   keyConfidence: decimal('key_confidence', { precision: 4, scale: 3 }),
   beatGrid: jsonb('beat_grid').$type<number[]>(),
-  structure: jsonb('structure').$type<Array<{ label: string; start: number; end: number; confidence: number }>>(),
-  phrases: jsonb('phrases').$type<Array<{ start: number; end: number; energy: number }>>(),
+  structure:
+    jsonb('structure').$type<
+      Array<{ label: string; start: number; end: number; confidence: number }>
+    >(),
+  phrases:
+    jsonb('phrases').$type<
+      Array<{ start: number; end: number; energy: number }>
+    >(),
   dropMoments: jsonb('drop_moments').$type<number[]>(),
-  cuePoints: jsonb('cue_points').$type<{ mixIn: number; drop: number | null; breakdown: number | null; mixOut: number; confidence: number; detectedAt?: string }>(),
+  cuePoints: jsonb('cue_points').$type<{
+    mixIn: number;
+    drop: number | null;
+    breakdown: number | null;
+    mixOut: number;
+    confidence: number;
+    detectedAt?: string;
+  }>(),
   waveformLite: jsonb('waveform_lite').$type<number[]>(),
-  analysisQuality: varchar('analysis_quality', { length: 32 }).default('standard'),
-  analysisVersion: varchar('analysis_version', { length: 20 }).default('phase1-v1'),
+  analysisQuality: varchar('analysis_quality', { length: 32 }).default(
+    'standard'
+  ),
+  analysisVersion: varchar('analysis_version', { length: 20 }).default(
+    'phase1-v1'
+  ),
   durationSeconds: decimal('duration_seconds', { precision: 7, scale: 2 }),
   hasStems: boolean('has_stems').notNull().default(false),
   createdAt: timestamp('created_at').notNull().defaultNow(),
@@ -109,96 +231,145 @@ export const uploadedTracks = pgTable('uploaded_tracks', {
 });
 
 // Track stems table
-export const trackStems = pgTable('track_stems', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  uploadedTrackId: uuid('uploaded_track_id').notNull().references(() => uploadedTracks.id, { onDelete: 'cascade' }),
-  stemType: stemTypeEnum('stem_type').notNull(),
-  storageUrl: varchar('storage_url', { length: 512 }),
-  quality: stemQualityEnum('quality').notNull().default('draft'),
-  engine: varchar('engine', { length: 64 }).default('ffmpeg'),
-  status: stemStatusEnum('status').notNull().default('pending'),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  updatedAt: timestamp('updated_at').notNull().defaultNow(),
-}, (table) => ({
-  trackStemUnique: uniqueIndex('uq_track_stem_type').on(table.uploadedTrackId, table.stemType),
-  trackIdIdx: index('idx_track_stems_track_id').on(table.uploadedTrackId),
-}));
+export const trackStems = pgTable(
+  'track_stems',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    uploadedTrackId: uuid('uploaded_track_id')
+      .notNull()
+      .references(() => uploadedTracks.id, { onDelete: 'cascade' }),
+    stemType: stemTypeEnum('stem_type').notNull(),
+    storageUrl: varchar('storage_url', { length: 512 }),
+    quality: stemQualityEnum('quality').notNull().default('draft'),
+    engine: varchar('engine', { length: 64 }).default('ffmpeg'),
+    status: stemStatusEnum('status').notNull().default('pending'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    trackStemUnique: uniqueIndex('uq_track_stem_type').on(
+      table.uploadedTrackId,
+      table.stemType
+    ),
+    trackIdIdx: index('idx_track_stems_track_id').on(table.uploadedTrackId),
+  })
+);
 
 // Mashups table
-export const mashups = pgTable('mashups', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  name: varchar('name', { length: 255 }).notNull(),
-  targetDurationSeconds: integer('target_duration_seconds').notNull(),
-  outputStorageUrl: varchar('output_storage_url', { length: 512 }),
-  previewStorageUrl: varchar('preview_storage_url', { length: 512 }),
-  publicPlaybackUrl: varchar('public_playback_url', { length: 512 }),
-  generationStatus: generationStatusEnum('generation_status').notNull().default('pending'),
-  playbackCount: integer('playback_count').notNull().default(0),
-  downloadCount: integer('download_count').notNull().default(0),
-  outputFormat: varchar('output_format', { length: 10 }).notNull().default('mp3'),
-  generationTimeMs: integer('generation_time_ms'),
-  mixMode: mixModeEnum('mix_mode').notNull().default('standard'),
-  recommendationContext: jsonb('recommendation_context'),
-  isPublic: boolean('is_public').notNull().default(false),
-  publicSlug: varchar('public_slug', { length: 64 }),
-  parentMashupId: uuid('parent_mashup_id'),
-  // Stem-based mashup fields
-  vocalTrackId: uuid('vocal_track_id').references(() => uploadedTracks.id, { onDelete: 'set null' }),
-  instrumentalTrackId: uuid('instrumental_track_id').references(() => uploadedTracks.id, { onDelete: 'set null' }),
-  targetBpm: decimal('target_bpm', { precision: 6, scale: 2 }),
-  pitchShiftSemitones: integer('pitch_shift_semitones').default(0),
-  autoKeyMatch: boolean('auto_key_match').default(true),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  updatedAt: timestamp('updated_at').notNull().defaultNow(),
-}, (table) => ({
-  publicSlugIdx: uniqueIndex('uq_mashups_public_slug').on(table.publicSlug),
-  userIdIdx: index('idx_mashups_user_id').on(table.userId),
-}));
+export const mashups = pgTable(
+  'mashups',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    projectId: uuid('project_id').references(() => projects.id, {
+      onDelete: 'set null',
+    }),
+    name: varchar('name', { length: 255 }).notNull(),
+    targetDurationSeconds: integer('target_duration_seconds').notNull(),
+    outputStorageUrl: varchar('output_storage_url', { length: 512 }),
+    previewStorageUrl: varchar('preview_storage_url', { length: 512 }),
+    publicPlaybackUrl: varchar('public_playback_url', { length: 512 }),
+    generationStatus: generationStatusEnum('generation_status')
+      .notNull()
+      .default('pending'),
+    playbackCount: integer('playback_count').notNull().default(0),
+    downloadCount: integer('download_count').notNull().default(0),
+    outputFormat: varchar('output_format', { length: 10 })
+      .notNull()
+      .default('mp3'),
+    generationTimeMs: integer('generation_time_ms'),
+    mixMode: mixModeEnum('mix_mode').notNull().default('standard'),
+    recommendationContext: jsonb('recommendation_context'),
+    isPublic: boolean('is_public').notNull().default(false),
+    publicSlug: varchar('public_slug', { length: 64 }),
+    parentMashupId: uuid('parent_mashup_id'),
+    // Stem-based mashup fields
+    vocalTrackId: uuid('vocal_track_id').references(() => uploadedTracks.id, {
+      onDelete: 'set null',
+    }),
+    instrumentalTrackId: uuid('instrumental_track_id').references(
+      () => uploadedTracks.id,
+      { onDelete: 'set null' }
+    ),
+    targetBpm: decimal('target_bpm', { precision: 6, scale: 2 }),
+    pitchShiftSemitones: integer('pitch_shift_semitones').default(0),
+    autoKeyMatch: boolean('auto_key_match').default(true),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    publicSlugIdx: uniqueIndex('uq_mashups_public_slug').on(table.publicSlug),
+    userIdIdx: index('idx_mashups_user_id').on(table.userId),
+  })
+);
 
 // Mashup input tracks (many-to-many relationship)
 export const mashupInputTracks = pgTable('mashup_input_tracks', {
-  mashupId: uuid('mashup_id').notNull().references(() => mashups.id, { onDelete: 'cascade' }),
-  uploadedTrackId: uuid('uploaded_track_id').notNull().references(() => uploadedTracks.id, { onDelete: 'cascade' }),
+  mashupId: uuid('mashup_id')
+    .notNull()
+    .references(() => mashups.id, { onDelete: 'cascade' }),
+  uploadedTrackId: uuid('uploaded_track_id')
+    .notNull()
+    .references(() => uploadedTracks.id, { onDelete: 'cascade' }),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
 // Feedback table
 export const feedback = pgTable('feedback', {
   id: uuid('id').primaryKey().defaultRandom(),
-  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  mashupId: uuid('mashup_id').notNull().references(() => mashups.id, { onDelete: 'cascade' }),
+  userId: text('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  mashupId: uuid('mashup_id')
+    .notNull()
+    .references(() => mashups.id, { onDelete: 'cascade' }),
   rating: integer('rating').notNull(), // 1-5 stars
   comments: text('comments'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
 // Monetization tables
-export const plans = pgTable('plans', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  slug: varchar('slug', { length: 64 }).notNull(),
-  name: varchar('name', { length: 128 }).notNull(),
-  tier: planTierEnum('tier').notNull().default('free'),
-  monthlyMinutes: integer('monthly_minutes').notNull().default(120),
-  maxStemsQuality: stemQualityEnum('max_stems_quality').notNull().default('draft'),
-  queuePriority: integer('queue_priority').notNull().default(1),
-  priceCents: integer('price_cents').notNull().default(0),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-}, (table) => ({
-  planSlugUnique: uniqueIndex('uq_plans_slug').on(table.slug),
-}));
+export const plans = pgTable(
+  'plans',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    slug: varchar('slug', { length: 64 }).notNull(),
+    name: varchar('name', { length: 128 }).notNull(),
+    tier: planTierEnum('tier').notNull().default('free'),
+    monthlyMinutes: integer('monthly_minutes').notNull().default(120),
+    maxStemsQuality: stemQualityEnum('max_stems_quality')
+      .notNull()
+      .default('draft'),
+    queuePriority: integer('queue_priority').notNull().default(1),
+    priceCents: integer('price_cents').notNull().default(0),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    planSlugUnique: uniqueIndex('uq_plans_slug').on(table.slug),
+  })
+);
 
-export const userPlans = pgTable('user_plans', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  planId: uuid('plan_id').notNull().references(() => plans.id, { onDelete: 'cascade' }),
-  renewsAt: timestamp('renews_at'),
-  quotaMinutesUsed: integer('quota_minutes_used').notNull().default(0),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  updatedAt: timestamp('updated_at').notNull().defaultNow(),
-}, (table) => ({
-  userPlanUnique: uniqueIndex('uq_user_active_plan').on(table.userId),
-}));
+export const userPlans = pgTable(
+  'user_plans',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    planId: uuid('plan_id')
+      .notNull()
+      .references(() => plans.id, { onDelete: 'cascade' }),
+    renewsAt: timestamp('renews_at'),
+    quotaMinutesUsed: integer('quota_minutes_used').notNull().default(0),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    userPlanUnique: uniqueIndex('uq_user_active_plan').on(table.userId),
+  })
+);
 
 // Challenges & collaboration
 export const challenges = pgTable('challenges', {
@@ -208,42 +379,74 @@ export const challenges = pgTable('challenges', {
   status: challengeStatusEnum('status').notNull().default('draft'),
   startsAt: timestamp('starts_at'),
   endsAt: timestamp('ends_at'),
-  createdByUserId: text('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+  createdByUserId: text('created_by_user_id').references(() => users.id, {
+    onDelete: 'set null',
+  }),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
 
-export const challengeSubmissions = pgTable('challenge_submissions', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  challengeId: uuid('challenge_id').notNull().references(() => challenges.id, { onDelete: 'cascade' }),
-  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  mashupId: uuid('mashup_id').notNull().references(() => mashups.id, { onDelete: 'cascade' }),
-  status: submissionStatusEnum('status').notNull().default('pending'),
-  score: integer('score'),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  updatedAt: timestamp('updated_at').notNull().defaultNow(),
-}, (table) => ({
-  challengeUserUnique: uniqueIndex('uq_challenge_user').on(table.challengeId, table.userId),
-}));
+export const challengeSubmissions = pgTable(
+  'challenge_submissions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    challengeId: uuid('challenge_id')
+      .notNull()
+      .references(() => challenges.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    mashupId: uuid('mashup_id')
+      .notNull()
+      .references(() => mashups.id, { onDelete: 'cascade' }),
+    status: submissionStatusEnum('status').notNull().default('pending'),
+    score: integer('score'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    challengeUserUnique: uniqueIndex('uq_challenge_user').on(
+      table.challengeId,
+      table.userId
+    ),
+  })
+);
 
-export const collabInvites = pgTable('collab_invites', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  mashupId: uuid('mashup_id').notNull().references(() => mashups.id, { onDelete: 'cascade' }),
-  fromUserId: text('from_user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  toUserId: text('to_user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  status: collabStatusEnum('status').notNull().default('pending'),
-  role: varchar('role', { length: 64 }).default('contributor'),
-  createdAt: timestamp('created_at').notNull().defaultNow(),
-  updatedAt: timestamp('updated_at').notNull().defaultNow(),
-}, (table) => ({
-  inviteUnique: uniqueIndex('uq_collab_invite').on(table.mashupId, table.toUserId),
-}));
+export const collabInvites = pgTable(
+  'collab_invites',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    mashupId: uuid('mashup_id')
+      .notNull()
+      .references(() => mashups.id, { onDelete: 'cascade' }),
+    fromUserId: text('from_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    toUserId: text('to_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    status: collabStatusEnum('status').notNull().default('pending'),
+    role: varchar('role', { length: 64 }).default('contributor'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    inviteUnique: uniqueIndex('uq_collab_invite').on(
+      table.mashupId,
+      table.toUserId
+    ),
+  })
+);
 
 // Recommendation cache
 export const recommendations = pgTable('recommendations', {
   id: uuid('id').primaryKey().defaultRandom(),
-  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  seedTrackId: uuid('seed_track_id').references(() => uploadedTracks.id, { onDelete: 'set null' }),
+  userId: text('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  seedTrackId: uuid('seed_track_id').references(() => uploadedTracks.id, {
+    onDelete: 'set null',
+  }),
   suggestedTrackIds: jsonb('suggested_track_ids').$type<string[]>(),
   rationale: text('rationale'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
@@ -253,7 +456,9 @@ export const recommendations = pgTable('recommendations', {
 export const playbackSurveys = pgTable('playback_surveys', {
   id: uuid('id').primaryKey().defaultRandom(),
   userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
-  mashupId: uuid('mashup_id').references(() => mashups.id, { onDelete: 'cascade' }),
+  mashupId: uuid('mashup_id').references(() => mashups.id, {
+    onDelete: 'cascade',
+  }),
   rating: integer('rating'),
   answers: jsonb('answers').$type<Record<string, unknown>>(),
   createdAt: timestamp('created_at').notNull().defaultNow(),
@@ -268,6 +473,8 @@ export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
 export type Verification = typeof verifications.$inferSelect;
 export type NewVerification = typeof verifications.$inferInsert;
+export type Project = typeof projects.$inferSelect;
+export type NewProject = typeof projects.$inferInsert;
 export type UploadedTrack = typeof uploadedTracks.$inferSelect;
 export type NewUploadedTrack = typeof uploadedTracks.$inferInsert;
 export type Mashup = typeof mashups.$inferSelect;

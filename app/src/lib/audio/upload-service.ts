@@ -18,7 +18,12 @@ export type UploadedTrackResponse = {
   key_confidence: number | null;
   beat_grid: number[];
   phrases: Array<{ start: number; end: number; energy: number }>;
-  structure: Array<{ label: string; start: number; end: number; confidence: number }>;
+  structure: Array<{
+    label: string;
+    start: number;
+    end: number;
+    confidence: number;
+  }>;
   drop_moments: number[];
   waveform_lite: number[];
   analysis_version: string | null;
@@ -29,7 +34,11 @@ export type UploadedTrackResponse = {
   created_at: string;
 };
 
-export async function processSingleUpload(userId: string, file: File): Promise<UploadedTrackResponse> {
+export async function processSingleUpload(
+  userId: string,
+  file: File,
+  projectId?: string | null
+): Promise<UploadedTrackResponse> {
   if (!ALLOWED_TYPES.includes(file.type)) {
     throw new ValidationError(`Unsupported file type: ${file.type}`);
   }
@@ -41,7 +50,11 @@ export async function processSingleUpload(userId: string, file: File): Promise<U
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
   const storage = await getStorage();
-  const storageUrl = await storage.uploadFile(buffer, `${userId}/${Date.now()}-${file.name}`, file.type);
+  const storageUrl = await storage.uploadFile(
+    buffer,
+    `${userId}/${Date.now()}-${file.name}`,
+    file.type
+  );
 
   const [track] = await db
     .insert(uploadedTracks)
@@ -53,16 +66,26 @@ export async function processSingleUpload(userId: string, file: File): Promise<U
       mimeType: file.type,
       uploadStatus: 'uploaded',
       analysisStatus: 'pending',
+      projectId: projectId || null,
     })
     .returning();
 
   // Enqueue analysis (in-memory queue by default)
-  void enqueueAnalysis({ type: 'analysis', trackId: track.id, buffer, storageUrl, mimeType: file.type, fileName: file.name });
+  void enqueueAnalysis({
+    type: 'analysis',
+    trackId: track.id,
+    buffer,
+    storageUrl,
+    mimeType: file.type,
+    fileName: file.name,
+  });
 
   return formatTrackResponse(track);
 }
 
-export function formatTrackResponse(track: typeof uploadedTracks.$inferSelect): UploadedTrackResponse {
+export function formatTrackResponse(
+  track: typeof uploadedTracks.$inferSelect
+): UploadedTrackResponse {
   return {
     id: track.id,
     original_filename: track.originalFilename,
@@ -78,7 +101,9 @@ export function formatTrackResponse(track: typeof uploadedTracks.$inferSelect): 
     drop_moments: track.dropMoments ?? [],
     waveform_lite: track.waveformLite ?? [],
     analysis_version: track.analysisVersion ?? null,
-    duration_seconds: track.durationSeconds ? Number(track.durationSeconds) : null,
+    duration_seconds: track.durationSeconds
+      ? Number(track.durationSeconds)
+      : null,
     has_stems: Boolean(track.hasStems),
     file_size_bytes: track.fileSizeBytes,
     mime_type: track.mimeType,

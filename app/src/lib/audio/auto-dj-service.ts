@@ -1624,19 +1624,24 @@ export async function renderAutoDjMix(
     });
 
     // Build FFmpeg filter graph using phrase-aware timings
-    playbackPlans.forEach((plan, idx) => {
+    playbackPlans.forEach((trackPlan, idx) => {
       const chainParts: string[] = [];
 
       // Initial loudness normalization (pre-processing)
       chainParts.push('loudnorm=I=-14:TP=-1:LRA=11');
 
       // Tempo adjustment
-      const atempo = applyTempoRamp(plan.tempoRatio, config.tempoRampSeconds);
+      const atempo = applyTempoRamp(
+        trackPlan.tempoRatio,
+        config.tempoRampSeconds
+      );
       if (atempo) chainParts.push(atempo);
 
-      const trimEnd = Math.max(plan.startOffset + 0.1, plan.trimEnd);
+      const trimEnd = Math.max(trackPlan.startOffset + 0.1, trackPlan.trimEnd);
       chainParts.push(
-        `atrim=start=${plan.startOffset.toFixed(3)}:end=${trimEnd.toFixed(3)}`
+        `atrim=start=${trackPlan.startOffset.toFixed(3)}:end=${trimEnd.toFixed(
+          3
+        )}`
       );
       chainParts.push('asetpts=PTS-STARTPTS');
 
@@ -1660,34 +1665,115 @@ export async function renderAutoDjMix(
         );
       }
 
-      if (plan.fadeInDuration > 0) {
-        chainParts.push(`afade=t=in:st=0:d=${plan.fadeInDuration.toFixed(3)}`);
+      if (trackPlan.fadeInDuration > 0) {
+        chainParts.push(
+          `afade=t=in:st=0:d=${trackPlan.fadeInDuration.toFixed(3)}`
+        );
       }
 
-      if (plan.fadeOutDuration > 0 && plan.fadeOutStart !== null) {
+      if (trackPlan.fadeOutDuration > 0 && trackPlan.fadeOutStart !== null) {
+        // Apply transition-specific effect BEFORE the fade
+        // Get the transition style for this track (if it's transitioning to the next track)
+        const transitionForThisTrack = playbackPlans[idx + 1]
+          ? plan.transitions[idx]
+          : null;
+
+        if (transitionForThisTrack?.style) {
+          const style = transitionForThisTrack.style;
+          const duration = trackPlan.fadeOutDuration;
+
+          // Apply transition-specific effects
+          switch (style) {
+            case 'filter_sweep':
+              // Highpass frequency sweep opening up the sound
+              chainParts.push(
+                `highpass=f='20+20000*t/${Math.max(duration, 1).toFixed(3)}'`
+              );
+              break;
+
+            case 'echo_reverb':
+              // Echo effect on the outgoing track
+              chainParts.push('aecho=0.8:0.9:1000:0.3');
+              break;
+
+            case 'backspin':
+              // Reverse effect before fade
+              chainParts.push('areverse');
+              break;
+
+            case 'tape_stop':
+              // Slow down effect (pitch down one octave)
+              chainParts.push('asetrate=22050,aresample=44100');
+              break;
+
+            case 'stutter_edit':
+              // Rhythmic stutter using tempo changes
+              chainParts.push('atempo=1.5,atempo=0.66');
+              break;
+
+            case 'three_band_swap':
+              // 3-band EQ manipulation
+              chainParts.push(
+                'anequalizer=c0f=200:c0w=2:c0g=-10:c1f=2500:c1w=3:c1g=10:c2f=8000:c2w=4:c2g=-10'
+              );
+              break;
+
+            case 'bass_drop':
+              // Cut bass momentarily
+              chainParts.push('lowpass=f=200');
+              break;
+
+            case 'snare_roll':
+              // Boost high frequencies
+              chainParts.push('highpass=f=2000');
+              break;
+
+            case 'noise_riser':
+              // Generate white noise with rising envelope for build-up effect
+              const riseTime = Math.floor(duration * 0.8);
+              const fadeTime = Math.floor(duration * 0.2);
+              // Note: noise_riser is complex - it needs to be generated separately and mixed
+              // For now, apply a highpass sweep as a simpler alternative
+              chainParts.push(
+                `highpass=f='500+4000*t/${Math.max(duration, 1).toFixed(3)}'`
+              );
+              break;
+
+            // Basic transitions (smooth, drop, cut, energy) use standard fade
+            case 'smooth':
+            case 'drop':
+            case 'cut':
+            case 'energy':
+            default:
+              // No special effect, just the fade
+              break;
+          }
+        }
+
+        // Then apply the fade-out
         const fadeOutStart = Math.min(
-          plan.fadeOutStart,
-          Math.max(0, trimEnd - plan.fadeOutDuration)
+          trackPlan.fadeOutStart,
+          Math.max(0, trimEnd - trackPlan.fadeOutDuration)
         );
         chainParts.push(
           `afade=t=out:st=${fadeOutStart.toFixed(
             3
-          )}:d=${plan.fadeOutDuration.toFixed(3)}`
+          )}:d=${trackPlan.fadeOutDuration.toFixed(3)}`
         );
       }
 
       // Sidechain ducking for vocal clarity
-      if (config.enableSidechainDucking && plan.fadeOutDuration > 0) {
+      if (config.enableSidechainDucking && trackPlan.fadeOutDuration > 0) {
         // Duck vocals during fade out
         chainParts.push(
-          `volume=1-0.3*t/${Math.max(plan.fadeOutDuration, 1).toFixed(3)}`
+          `volume=1-0.3*t/${Math.max(trackPlan.fadeOutDuration, 1).toFixed(3)}`
         );
       }
 
       // Filter sweep effect
-      if (config.enableFilterSweep && plan.fadeOutDuration > 0) {
+      if (config.enableFilterSweep && trackPlan.fadeOutDuration > 0) {
         const sweep = `highpass=f='20+2000*t/${Math.max(
-          plan.fadeOutDuration,
+          trackPlan.fadeOutDuration,
           0.5
         ).toFixed(3)}':p=1.2`;
         chainParts.push(sweep);
@@ -1696,7 +1782,7 @@ export async function renderAutoDjMix(
       chainParts.push('volume=1');
       filters.push(`[${idx}:a]${chainParts.join(',')}[p${idx}]`);
 
-      const delayMs = Math.max(0, Math.round(plan.startTime * 1000));
+      const delayMs = Math.max(0, Math.round(trackPlan.startTime * 1000));
       filters.push(`[p${idx}]adelay=${delayMs}|${delayMs}[d${idx}]`);
     });
 
@@ -1719,9 +1805,7 @@ export async function renderAutoDjMix(
     }
 
     // Final limiter to prevent clipping
-    finalFilters.push(
-      `alimiter=level_in=1:level_out=0.95`
-    );
+    finalFilters.push(`alimiter=level_in=1:level_out=0.95`);
 
     // Apply final filters
     if (finalFilters.length > 0) {
@@ -1825,9 +1909,7 @@ export async function renderAutoDjMix(
       } else if (config.loudnessNormalization === 'peak') {
         fallbackFilters.push(`[mixed]loudnorm=TP=-1.5:I=-14:LRA=11[final]`);
       }
-      fallbackFilters.push(
-        `[mixed]alimiter=level_in=1:level_out=0.95[final]`
-      );
+      fallbackFilters.push(`[mixed]alimiter=level_in=1:level_out=0.95[final]`);
 
       return fallbackFilters;
     };

@@ -11,7 +11,24 @@ import { TrackList, Track } from '@/components/track-list';
 import { DurationPicker, DurationPreset } from '@/components/duration-picker';
 import { overallCompatibility, camelotCompatible } from '@/lib/utils/audio-compat';
 
-type TransitionStyle = 'smooth' | 'drop' | 'energy' | 'cut' | 'filter_sweep' | 'echo_reverb' | 'backspin' | 'tape_stop' | 'stutter_edit' | 'three_band_swap' | 'bass_drop' | 'snare_roll' | 'noise_riser';
+type TransitionStyle =
+  | 'smooth'
+  | 'drop'
+  | 'energy'
+  | 'cut'
+  | 'filter_sweep'
+  | 'echo_reverb'
+  | 'backspin'
+  | 'tape_stop'
+  | 'stutter_edit'
+  | 'three_band_swap'
+  | 'bass_drop'
+  | 'snare_roll'
+  | 'noise_riser'
+  | 'vocal_handoff'
+  | 'bass_swap'
+  | 'reverb_wash'
+  | 'echo_out';
 
 type MixMode = 'standard' | 'stem_mashup' | 'auto_dj';
 

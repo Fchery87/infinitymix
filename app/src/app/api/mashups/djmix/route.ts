@@ -93,6 +93,30 @@ export async function GET() {
         description: 'White noise riser leading into the drop',
         category: 'advanced',
       },
+      {
+        id: 'vocal_handoff',
+        name: 'Vocal Handoff',
+        description: 'Warm vocal handoff during the fade out',
+        category: 'stem',
+      },
+      {
+        id: 'bass_swap',
+        name: 'Bass Swap',
+        description: 'Highpass cut to swap bass quickly',
+        category: 'stem',
+      },
+      {
+        id: 'reverb_wash',
+        name: 'Reverb Wash',
+        description: 'Ambient wash as the outgoing track fades',
+        category: 'stem',
+      },
+      {
+        id: 'echo_out',
+        name: 'Echo Out',
+        description: 'Trailing echo feel as the track fades',
+        category: 'stem',
+      },
     ] as const,
     energyModes: [
       { id: 'steady', name: 'Steady', description: 'Consistent energy throughout' },
@@ -166,6 +190,7 @@ const djMixSchema = z.object({
     'filter_sweep', 'echo_reverb', 'backspin',
     'tape_stop', 'stutter_edit', 'three_band_swap',
     'bass_drop', 'snare_roll', 'noise_riser',
+    'vocal_handoff', 'bass_swap', 'reverb_wash', 'echo_out',
   ]).optional(),
   fadeDurationSeconds: z.number().min(0).max(20).optional(),
   energyMode: z.enum(['steady', 'build', 'wave']).optional(),

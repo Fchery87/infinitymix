@@ -1636,262 +1636,240 @@ export async function renderAutoDjMix(
 
     // Build FFmpeg filter graph using phrase-aware timings
     playbackPlans.forEach((trackPlan, idx) => {
-      const chainParts: string[] = [];
+      const baseParts: string[] = [];
 
       // Initial loudness normalization (pre-processing)
-      chainParts.push('loudnorm=I=-14:TP=-1:LRA=11');
+      baseParts.push('loudnorm=I=-14:TP=-1:LRA=11');
 
       // Tempo adjustment
       const atempo = applyTempoRamp(
         trackPlan.tempoRatio,
         config.tempoRampSeconds
       );
-      if (atempo) chainParts.push(atempo);
+      if (atempo) baseParts.push(atempo);
 
       const trimEnd = Math.max(trackPlan.startOffset + 0.1, trackPlan.trimEnd);
-      chainParts.push(
+      baseParts.push(
         `atrim=start=${trackPlan.startOffset.toFixed(3)}:end=${trimEnd.toFixed(
           3
         )}`
       );
-      chainParts.push('asetpts=PTS-STARTPTS');
+      baseParts.push('asetpts=PTS-STARTPTS');
 
       // Dynamic EQ for frequency masking prevention
       if (config.enableDynamicEQ) {
         // Add dynamic EQ to prevent vocal clashes
-        chainParts.push(`equalizer=f=500:t=h:width=200:g=-2`); // Cut low-mids
-        chainParts.push(`equalizer=f=2500:t=h:width=1000:g=-2`); // Cut vocal presence
+        baseParts.push(`equalizer=f=500:t=h:width=200:g=-2`); // Cut low-mids
+        baseParts.push(`equalizer=f=2500:t=h:width=1000:g=-2`); // Cut vocal presence
       }
 
       // Multiband compression for control
       if (config.enableMultibandCompression) {
-        chainParts.push(
+        baseParts.push(
           `lowpass=f=250,acompressor=threshold=-24db:ratio=2:attack=20ms:release=100ms`
         );
-        chainParts.push(
+        baseParts.push(
           `lowpass=f=2500,highpass=f=250,acompressor=threshold=-20db:ratio=3:attack=20ms:release=100ms`
         );
-        chainParts.push(
+        baseParts.push(
           `highpass=f=4000,acompressor=threshold=-18db:ratio=4:attack=20ms:release=100ms`
         );
       }
 
       if (trackPlan.fadeInDuration > 0) {
-        chainParts.push(
+        baseParts.push(
           `afade=t=in:st=0:d=${trackPlan.fadeInDuration.toFixed(3)}`
         );
       }
 
+      const transitionForThisTrack = playbackPlans[idx + 1]
+        ? plan.transitions[idx]
+        : null;
+      const fullSegmentEffects: string[] = [];
+      const transitionEffects: string[] = [];
+
+      if (
+        transitionForThisTrack?.style &&
+        trackPlan.fadeOutDuration > 0 &&
+        trackPlan.fadeOutStart !== null
+      ) {
+        const style = transitionForThisTrack.style;
+        const duration = trackPlan.fadeOutDuration;
+        const effectDuration = Math.max(0.5, duration);
+
+        switch (style) {
+          case 'backspin':
+            // Reverse effect before fade - this one needs to apply to full audio
+            fullSegmentEffects.push('areverse');
+            break;
+
+          case 'tape_stop':
+            // Slow down effect - needs special handling, keep as-is for now
+            fullSegmentEffects.push('asetrate=22050,aresample=44100');
+            break;
+
+          case 'stutter_edit':
+            // Rhythmic stutter - needs to apply to full segment
+            fullSegmentEffects.push('atempo=1.5,atempo=0.66');
+            break;
+
+          case 'filter_sweep':
+            transitionEffects.push(
+              `highpass=f='20+20000*t/${effectDuration.toFixed(3)}'`
+            );
+            break;
+
+          case 'echo_reverb':
+            transitionEffects.push(`aecho=0.8:0.9:1000:0.3`);
+            break;
+
+          case 'three_band_swap':
+            transitionEffects.push(
+              `anequalizer=c0f=200:c0w=2:c0g=-10:c1f=2500:c1w=3:c1g=10:c2f=8000:c2w=4:c2g=-10`
+            );
+            break;
+
+          case 'bass_drop':
+            transitionEffects.push(`lowpass=f=200`);
+            break;
+
+          case 'snare_roll':
+            transitionEffects.push(`highpass=f=2000`);
+            break;
+
+          case 'noise_riser':
+            transitionEffects.push(
+              `highpass=f='500+4000*t/${effectDuration.toFixed(3)}'`
+            );
+            break;
+
+          // NEW STEM-BASED TRANSITIONS
+          case 'vocal_handoff':
+            transitionEffects.push(`lowpass=f=4000`);
+            transitionEffects.push(
+              `volume='1-0.3*(t/${effectDuration.toFixed(3)})':eval=frame`
+            );
+            break;
+
+          case 'bass_swap':
+            transitionEffects.push(`highpass=f=200:p=2`);
+            break;
+
+          case 'reverb_wash':
+            transitionEffects.push(
+              `lowpass=f='20000-15000*t/${effectDuration.toFixed(3)}'`
+            );
+            transitionEffects.push(
+              `volume='1-0.4*(t/${effectDuration.toFixed(3)})':eval=frame`
+            );
+            break;
+
+          case 'echo_out':
+            transitionEffects.push(
+              `highpass=f='20+500*t/${effectDuration.toFixed(3)}'`
+            );
+            transitionEffects.push(
+              `lowpass=f='20000-8000*t/${effectDuration.toFixed(3)}'`
+            );
+            break;
+
+          case 'smooth':
+          case 'drop':
+          case 'cut':
+          case 'energy':
+          default:
+            break;
+        }
+      }
+
       if (trackPlan.fadeOutDuration > 0 && trackPlan.fadeOutStart !== null) {
-        // Apply transition-specific effect BEFORE the fade
-        // Get the transition style for this track (if it's transitioning to the next track)
-        const transitionForThisTrack = playbackPlans[idx + 1]
-          ? plan.transitions[idx]
-          : null;
+        const effectDuration = Math.max(0.5, trackPlan.fadeOutDuration);
 
-        if (transitionForThisTrack?.style) {
-          const style = transitionForThisTrack.style;
-          const duration = trackPlan.fadeOutDuration;
-
-          // Apply transition-specific effects
-          switch (style) {
-            case 'filter_sweep': {
-              // Highpass frequency sweep - use time relative to fadeout start
-              const effectStart = Math.max(
-                0,
-                trackPlan.fadeOutStart - trackPlan.startOffset
-              );
-              chainParts.push(
-                `highpass=f='20+20000*(t-${effectStart.toFixed(3)})/${Math.max(
-                  duration,
-                  1
-                ).toFixed(3)}':enable='gte(t,${effectStart.toFixed(3)})'`
-              );
-              break;
-            }
-
-            case 'echo_reverb': {
-              // Echo effect only during transition
-              const effectStart = Math.max(
-                0,
-                trackPlan.fadeOutStart - trackPlan.startOffset
-              );
-              chainParts.push(
-                `aecho=0.8:0.9:1000:0.3:enable='gte(t,${effectStart.toFixed(
-                  3
-                )})'`
-              );
-              break;
-            }
-
-            case 'backspin':
-              // Reverse effect before fade - this one needs to apply to full audio
-              chainParts.push('areverse');
-              break;
-
-            case 'tape_stop':
-              // Slow down effect - needs special handling, keep as-is for now
-              chainParts.push('asetrate=22050,aresample=44100');
-              break;
-
-            case 'stutter_edit':
-              // Rhythmic stutter - needs to apply to full segment
-              chainParts.push('atempo=1.5,atempo=0.66');
-              break;
-
-            case 'three_band_swap': {
-              // 3-band EQ manipulation during transition
-              const effectStart = Math.max(
-                0,
-                trackPlan.fadeOutStart - trackPlan.startOffset
-              );
-              chainParts.push(
-                `anequalizer=c0f=200:c0w=2:c0g=-10:c1f=2500:c1w=3:c1g=10:c2f=8000:c2w=4:c2g=-10:enable='gte(t,${effectStart.toFixed(
-                  3
-                )})'`
-              );
-              break;
-            }
-
-            case 'bass_drop': {
-              // Cut bass only during transition
-              const effectStart = Math.max(
-                0,
-                trackPlan.fadeOutStart - trackPlan.startOffset
-              );
-              chainParts.push(
-                `lowpass=f=200:enable='gte(t,${effectStart.toFixed(3)})'`
-              );
-              break;
-            }
-
-            case 'snare_roll': {
-              // Boost high frequencies only during transition
-              const effectStart = Math.max(
-                0,
-                trackPlan.fadeOutStart - trackPlan.startOffset
-              );
-              chainParts.push(
-                `highpass=f=2000:enable='gte(t,${effectStart.toFixed(3)})'`
-              );
-              break;
-            }
-
-            case 'noise_riser': {
-              // Highpass sweep during transition
-              const effectStart = Math.max(
-                0,
-                trackPlan.fadeOutStart - trackPlan.startOffset
-              );
-              chainParts.push(
-                `highpass=f='500+4000*(t-${effectStart.toFixed(3)})/${Math.max(
-                  duration,
-                  1
-                ).toFixed(3)}':enable='gte(t,${effectStart.toFixed(3)})'`
-              );
-              break;
-            }
-
-            // NEW STEM-BASED TRANSITIONS
-            // These effects use 'enable' expression to only apply during the fadeout
-            // fadeOutStart is calculated relative to the trimmed segment (after atrim)
-            case 'vocal_handoff': {
-              // Calculate when the effect should start (relative to trimmed segment start)
-              const effectStart = Math.max(
-                0,
-                trackPlan.fadeOutStart - trackPlan.startOffset
-              );
-              // Apply small echo only during transition
-              chainParts.push(
-                `aecho=0.7:0.8:500:0.4:enable='gte(t,${effectStart.toFixed(
-                  3
-                )})'`
-              );
-              break;
-            }
-
-            case 'bass_swap': {
-              // Bass swap - cut bass only at the very end of the transition
-              const effectStart = Math.max(
-                0,
-                trackPlan.fadeOutStart - trackPlan.startOffset
-              );
-              chainParts.push(
-                `highpass=f=200:p=2:enable='gte(t,${effectStart.toFixed(3)})'`
-              );
-              break;
-            }
-
-            case 'reverb_wash': {
-              // Reverb wash - apply long decay echo only during transition
-              const effectStart = Math.max(
-                0,
-                trackPlan.fadeOutStart - trackPlan.startOffset
-              );
-              chainParts.push(
-                `aecho=0.8:0.95:1000|1500:0.5|0.3:enable='gte(t,${effectStart.toFixed(
-                  3
-                )})'`
-              );
-              break;
-            }
-
-            case 'echo_out': {
-              // Echo out - apply rhythmic delay during transition
-              const effectStart = Math.max(
-                0,
-                trackPlan.fadeOutStart - trackPlan.startOffset
-              );
-              chainParts.push(
-                `aecho=0.8:0.85:750:0.5:enable='gte(t,${effectStart.toFixed(
-                  3
-                )})'`
-              );
-              break;
-            }
-
-            // Basic transitions (smooth, drop, cut, energy) use standard fade
-            case 'smooth':
-            case 'drop':
-            case 'cut':
-            case 'energy':
-            default:
-              // No special effect, just the fade
-              break;
-          }
+        // Sidechain ducking for vocal clarity during transition
+        if (config.enableSidechainDucking) {
+          transitionEffects.push(
+            `volume='1-0.3*(t/${effectDuration.toFixed(3)})':eval=frame`
+          );
         }
 
-        // Then apply the fade-out
-        const fadeOutStart = Math.min(
-          trackPlan.fadeOutStart,
-          Math.max(0, trimEnd - trackPlan.fadeOutDuration)
-        );
-        chainParts.push(
-          `afade=t=out:st=${fadeOutStart.toFixed(
-            3
-          )}:d=${trackPlan.fadeOutDuration.toFixed(3)}`
-        );
+        // Filter sweep effect during transition
+        if (config.enableFilterSweep) {
+          transitionEffects.push(
+            `highpass=f='20+2000*t/${effectDuration.toFixed(3)}':p=1.2`
+          );
+        }
       }
 
-      // Sidechain ducking for vocal clarity
-      if (config.enableSidechainDucking && trackPlan.fadeOutDuration > 0) {
-        // Duck vocals during fade out
-        chainParts.push(
-          `volume=1-0.3*t/${Math.max(trackPlan.fadeOutDuration, 1).toFixed(3)}`
+      baseParts.push(...fullSegmentEffects);
+      baseParts.push('volume=1');
+
+      const baseLabel = `base${idx}`;
+      filters.push(`[${idx}:a]${baseParts.join(',')}[${baseLabel}]`);
+
+      let outputLabel = baseLabel;
+
+      if (trackPlan.fadeOutDuration > 0 && trackPlan.fadeOutStart !== null) {
+        const effectStart = Math.max(
+          0,
+          trackPlan.fadeOutStart - trackPlan.startOffset
         );
-      }
+        const trackLength = Math.max(
+          0,
+          trackPlan.trimEnd - trackPlan.startOffset
+        );
+        const effectEnd = Math.min(
+          trackLength,
+          effectStart + trackPlan.fadeOutDuration
+        );
+        const hasTransitionEffects =
+          transitionEffects.length > 0 && effectEnd > effectStart + 0.001;
 
-      // Filter sweep effect
-      if (config.enableFilterSweep && trackPlan.fadeOutDuration > 0) {
-        const sweep = `highpass=f='20+2000*t/${Math.max(
-          trackPlan.fadeOutDuration,
-          0.5
-        ).toFixed(3)}':p=1.2`;
-        chainParts.push(sweep);
-      }
+        if (hasTransitionEffects) {
+          const preLabel = `pre${idx}`;
+          const fxLabel = `fx${idx}`;
+          const preTrimLabel = `pretrim${idx}`;
+          const fxTrimLabel = `fxtrim${idx}`;
+          const concatLabel = `p${idx}`;
 
-      chainParts.push('volume=1');
-      filters.push(`[${idx}:a]${chainParts.join(',')}[p${idx}]`);
+          const effectChain = [
+            `atrim=start=${effectStart.toFixed(3)}:end=${effectEnd.toFixed(3)}`,
+            'asetpts=PTS-STARTPTS',
+            ...transitionEffects,
+            `afade=t=out:st=0:d=${trackPlan.fadeOutDuration.toFixed(3)}`,
+          ].join(',');
+
+          if (effectStart > 0.001) {
+            filters.push(`[${outputLabel}]asplit=2[${preLabel}][${fxLabel}]`);
+            filters.push(
+              `[${preLabel}]atrim=start=0:end=${effectStart.toFixed(
+                3
+              )},asetpts=PTS-STARTPTS[${preTrimLabel}]`
+            );
+            filters.push(`[${fxLabel}]${effectChain}[${fxTrimLabel}]`);
+            filters.push(
+              `[${preTrimLabel}][${fxTrimLabel}]concat=n=2:v=0:a=1[${concatLabel}]`
+            );
+          } else {
+            filters.push(`[${outputLabel}]${effectChain}[${concatLabel}]`);
+          }
+
+          outputLabel = concatLabel;
+        } else {
+          const fadeOutStart = Math.min(
+            effectStart,
+            Math.max(0, trackLength - trackPlan.fadeOutDuration)
+          );
+          filters.push(
+            `[${outputLabel}]afade=t=out:st=${fadeOutStart.toFixed(
+              3
+            )}:d=${trackPlan.fadeOutDuration.toFixed(3)}[p${idx}]`
+          );
+          outputLabel = `p${idx}`;
+        }
+      } else {
+        filters.push(`[${outputLabel}]anull[p${idx}]`);
+        outputLabel = `p${idx}`;
+      }
 
       const delayMs = Math.max(0, Math.round(trackPlan.startTime * 1000));
       filters.push(`[p${idx}]adelay=${delayMs}|${delayMs}[d${idx}]`);

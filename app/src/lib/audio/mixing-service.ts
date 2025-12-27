@@ -1,6 +1,6 @@
 /**
  * Mixing Service - Updated
- * 
+ *
  * Core audio mixing functionality with enhanced features:
  * - Multiband compression
  * - Per-stem EQ
@@ -30,7 +30,10 @@ function configureFFmpeg() {
       possiblePaths.push(ffmpegStaticPath);
     } else if (typeof ffmpegStaticPath === 'object' && ffmpegStaticPath.path) {
       possiblePaths.push(ffmpegStaticPath.path);
-    } else if (typeof ffmpegStaticPath === 'object' && (ffmpegStaticPath as any).ffmpegPath) {
+    } else if (
+      typeof ffmpegStaticPath === 'object' &&
+      (ffmpegStaticPath as any).ffmpegPath
+    ) {
       possiblePaths.push((ffmpegStaticPath as any).ffmpegPath);
     }
   } catch (error) {
@@ -49,24 +52,24 @@ function configureFFmpeg() {
   if (platform === 'linux') {
     // Linux paths
     systemPaths.push(
-      '/usr/bin/ffmpeg',           // apt, yum, dnf
-      '/usr/local/bin/ffmpeg',    // Manual install
-      '/snap/bin/ffmpeg',         // Snap package
-      '/usr/lib/ffmpeg',          // Some distros
-      '/usr/libexec/ffmpeg',      // Some distros
-      '/opt/ffmpeg/bin/ffmpeg',   // Manual/opt install
+      '/usr/bin/ffmpeg', // apt, yum, dnf
+      '/usr/local/bin/ffmpeg', // Manual install
+      '/snap/bin/ffmpeg', // Snap package
+      '/usr/lib/ffmpeg', // Some distros
+      '/usr/libexec/ffmpeg', // Some distros
+      '/opt/ffmpeg/bin/ffmpeg' // Manual/opt install
     );
   } else if (platform === 'darwin') {
     // macOS paths
     systemPaths.push(
-      '/opt/homebrew/bin/ffmpeg',  // Homebrew Apple Silicon
-      '/usr/local/bin/ffmpeg',     // Homebrew Intel
+      '/opt/homebrew/bin/ffmpeg', // Homebrew Apple Silicon
+      '/usr/local/bin/ffmpeg' // Homebrew Intel
     );
   } else if (platform === 'win32') {
     // Windows paths
     systemPaths.push(
       'C:\\ffmpeg\\bin\\ffmpeg.exe',
-      'C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe',
+      'C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe'
     );
   }
 
@@ -122,20 +125,20 @@ export interface MixingConfig {
   inputBuffers: Buffer[];
   duration?: number;
   outputFormat?: string;
-  
+
   // Processing options
   enableMultibandCompression?: boolean;
   multibandConfig?: MultibandConfig;
-  
+
   enableSidechainDucking?: boolean;
   sidechainConfig?: SidechainConfig;
-  
+
   enableDynamicEQ?: boolean;
-  
+
   // Loudness normalization
   loudnessNormalization?: 'ebu_r128' | 'peak' | 'none';
-  targetLoudness?: number;  // -23 for EBU
-  
+  targetLoudness?: number; // -23 for EBU
+
   // Transitions
   transitions?: Array<{
     fromIdx: number;
@@ -143,7 +146,7 @@ export interface MixingConfig {
     duration: number;
     style: TransitionStyle;
   }>;
-  
+
   // Per-stem mixing (overrides simple mixing)
   stemMixing?: StemMixingConfig;
 }
@@ -164,12 +167,15 @@ export interface MixingMetrics {
 /**
  * Crossfade presets for FFmpeg acrossfade filter
  */
-export const CROSSFADE_PRESETS: Record<TransitionStyle, { curve1: string; curve2: string }> = {
+export const CROSSFADE_PRESETS: Record<
+  TransitionStyle,
+  { curve1: string; curve2: string }
+> = {
   smooth: { curve1: 'tri', curve2: 'tri' },
   drop: { curve1: 'exp', curve2: 'log' },
   cut: { curve1: 'nofade', curve2: 'nofade' },
   energy: { curve1: 'qsin', curve2: 'qsin' },
-  
+
   // Additional curves
   filter_sweep: { curve1: 'hsin', curve2: 'hsin' },
   echo_reverb: { curve1: 'qsin', curve2: 'tri' },
@@ -180,11 +186,17 @@ export const CROSSFADE_PRESETS: Record<TransitionStyle, { curve1: string; curve2
   bass_drop: { curve1: 'exp', curve2: 'log' },
   snare_roll: { curve1: 'qsin', curve2: 'qsin' },
   noise_riser: { curve1: 'tri', curve2: 'exp' },
+
+  // New stem-based transitions
+  vocal_handoff: { curve1: 'qsin', curve2: 'qsin' },
+  bass_swap: { curve1: 'exp', curve2: 'exp' },
+  reverb_wash: { curve1: 'tri', curve2: 'exp' },
+  echo_out: { curve1: 'qsin', curve2: 'tri' },
 };
 
 /**
  * Mix multiple audio buffers together
- * 
+ *
  * This is the main entry point for audio mixing.
  * Routes to per-stem mixing if configured, otherwise uses simple mixing.
  */
@@ -218,24 +230,26 @@ export async function mixToBuffer(
 
   // Route to per-stem mixing if configured
   if (config.stemMixing) {
-    return mixStemsPerTrack(config.stemMixing, config.duration).then(result => ({
-      buffer: result.buffer,
-      metrics: {
-        processingTimeMs: result.metrics.processingTimeMs,
-        outputSizeBytes: result.metrics.outputSizeBytes,
-        tracksMixed: config.stemMixing.tracks.length,
-        transitionsApplied: config.stemMixing.transitions.length,
-        peakDb: result.metrics.peakDb,
-        rmsDb: result.metrics.rmsDb,
-      },
-    }));
+    return mixStemsPerTrack(config.stemMixing, config.duration).then(
+      (result) => ({
+        buffer: result.buffer,
+        metrics: {
+          processingTimeMs: result.metrics.processingTimeMs,
+          outputSizeBytes: result.metrics.outputSizeBytes,
+          tracksMixed: config.stemMixing.tracks.length,
+          transitionsApplied: config.stemMixing.transitions.length,
+          peakDb: result.metrics.peakDb,
+          rmsDb: result.metrics.rmsDb,
+        },
+      })
+    );
   }
 
   // Otherwise, use simple mixing
   const { buffer, metrics } = await simpleMix(inputBuffers, config);
-  
+
   log('info', 'mixing.completed', metrics);
-  
+
   return { buffer, metrics };
 }
 
@@ -259,7 +273,10 @@ async function simpleMix(
     // ========================================================================
     for (let i = 0; i < inputBuffers.length; i++) {
       const ext = 'mp3'; // Assume MP3 for now
-      const tempPath = path.join(tempDir, `mix-input-${i}-${Date.now()}.${ext}`);
+      const tempPath = path.join(
+        tempDir,
+        `mix-input-${i}-${Date.now()}.${ext}`
+      );
       await fs.writeFile(tempPath, inputBuffers[i]);
       tempFiles.push(tempPath);
     }
@@ -307,7 +324,7 @@ async function simpleMix(
     const command = ffmpeg();
 
     // Add all temp files as inputs
-    tempFiles.forEach(filePath => command.input(filePath));
+    tempFiles.forEach((filePath) => command.input(filePath));
 
     // Build filter chain
     const args = filterChain.buildFFmpegArgs();
@@ -346,7 +363,7 @@ async function simpleMix(
       });
 
       const output = command.pipe();
-      output.on('data', chunk => chunks.push(chunk));
+      output.on('data', (chunk) => chunks.push(chunk));
       output.on('end', () => resolve(Buffer.concat(chunks)));
       output.on('error', (err) => {
         log('error', 'mixing.stream.error', { error: err.message });
@@ -362,7 +379,7 @@ async function simpleMix(
     // Phase 4: Loudness normalization (optional)
     // ========================================================================
     let finalBuffer = result;
-    
+
     if (config.loudnessNormalization === 'ebu_r128') {
       const target = config.targetLoudness || -23;
       try {
@@ -373,10 +390,12 @@ async function simpleMix(
           dualMono: true,
           printFormat: 'json',
         });
-        
+
         log('info', 'mixing.loudness.normalized', { target: target });
       } catch (err) {
-        log('warn', 'mixing.loudness.failed', { error: (err as Error).message });
+        log('warn', 'mixing.loudness.failed', {
+          error: (err as Error).message,
+        });
       }
     }
 
@@ -410,7 +429,7 @@ export async function crossfadeBuffers(
   style: TransitionStyle = 'smooth'
 ): Promise<Buffer> {
   const preset = CROSSFADE_PRESETS[style];
-  
+
   const fs = await import('fs/promises');
   const os = await import('os');
   const path = await import('path');
@@ -421,10 +440,10 @@ export async function crossfadeBuffers(
   try {
     const pathA = path.join(tempDir, `crossfade-a-${Date.now()}.mp3`);
     const pathB = path.join(tempDir, `crossfade-b-${Date.now()}.mp3`);
-    
+
     await fs.writeFile(pathA, bufferA);
     await fs.writeFile(pathB, bufferB);
-    
+
     tempFiles.push(pathA, pathB);
 
     const chunks: Buffer[] = [];
@@ -437,17 +456,13 @@ export async function crossfadeBuffers(
           `[0:a][1:a]acrossfade=d=${duration}:c1=${preset.curve1}:c2=${preset.curve2}[out]`,
           'out'
         )
-        .outputOptions([
-          '-ac 2',
-          '-ar 44100',
-          '-b:a 192k',
-        ])
+        .outputOptions(['-ac 2', '-ar 44100', '-b:a 192k'])
         .format('mp3');
 
       command.on('error', reject);
 
       const output = command.pipe();
-      output.on('data', chunk => chunks.push(chunk));
+      output.on('data', (chunk) => chunks.push(chunk));
       output.on('end', () => resolve(Buffer.concat(chunks)));
       output.on('error', reject);
     });
@@ -468,7 +483,9 @@ export async function measureAudioMetrics(buffer: Buffer): Promise<{
 }> {
   // Simplified metrics (would need proper audio decoding for accuracy)
   const peak = Math.max(...buffer);
-  const rms = Math.sqrt(buffer.reduce((sum, byte) => sum + byte * byte, 0) / buffer.length);
+  const rms = Math.sqrt(
+    buffer.reduce((sum, byte) => sum + byte * byte, 0) / buffer.length
+  );
 
   return {
     peakDb: 20 * Math.log10(peak / 255),
@@ -488,7 +505,10 @@ const DEFAULT_MULTIBAND_CONFIG: MultibandConfig = {
 /**
  * Validate mixing configuration
  */
-export function validateMixingConfig(config: MixingConfig): { valid: boolean; errors: string[] } {
+export function validateMixingConfig(config: MixingConfig): {
+  valid: boolean;
+  errors: string[];
+} {
   const errors: string[] = [];
 
   if (!config.inputBuffers || config.inputBuffers.length === 0) {
@@ -501,14 +521,22 @@ export function validateMixingConfig(config: MixingConfig): { valid: boolean; er
 
   if (config.transitions) {
     for (const trans of config.transitions) {
-      if (trans.fromIdx < 0 || trans.fromIdx >= (config.inputBuffers?.length || 0)) {
+      if (
+        trans.fromIdx < 0 ||
+        trans.fromIdx >= (config.inputBuffers?.length || 0)
+      ) {
         errors.push(`Transition fromIdx ${trans.fromIdx} out of range`);
       }
-      if (trans.toIdx < 0 || trans.toIdx >= (config.inputBuffers?.length || 0)) {
+      if (
+        trans.toIdx < 0 ||
+        trans.toIdx >= (config.inputBuffers?.length || 0)
+      ) {
         errors.push(`Transition toIdx ${trans.toIdx} out of range`);
       }
       if (trans.duration < 0) {
-        errors.push(`Transition duration cannot be negative: ${trans.duration}`);
+        errors.push(
+          `Transition duration cannot be negative: ${trans.duration}`
+        );
       }
     }
   }

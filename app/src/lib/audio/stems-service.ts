@@ -3,6 +3,7 @@ import { trackStems, uploadedTracks, stemTypeEnum, stemQualityEnum } from '@/lib
 import { getStorage } from '@/lib/storage';
 import { handleAsyncError } from '@/lib/utils/error-handling';
 import { log } from '@/lib/logger';
+import { logTelemetry } from '@/lib/telemetry';
 import { eq, and } from 'drizzle-orm';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegStatic from 'ffmpeg-static';
@@ -17,6 +18,14 @@ export type StemType = (typeof stemTypeEnum.enumValues)[number];
 type StemQuality = (typeof stemQualityEnum.enumValues)[number];
 
 const STEM_TYPES: StemType[] = ['vocals', 'drums', 'bass', 'other'];
+
+/**
+ * Export types for use in other modules
+ */
+export type {
+  StemType,
+  StemQuality,
+};
 const DEMUCS_SERVICE_URL = process.env.DEMUCS_SERVICE_URL || 'http://localhost:8001';
 
 // FFmpeg fallback filters (basic frequency-based separation)
@@ -404,6 +413,90 @@ export async function getStemsForTrack(trackId: string) {
     .select()
     .from(trackStems)
     .where(eq(trackStems.uploadedTrackId, trackId));
+}
+
+/**
+ * Separate stems for multiple tracks in parallel
+ * 
+ * This is optimized for batch stem separation, processing all tracks
+ * concurrently using Promise.allSettled to avoid blocking on failures.
+ * 
+ * @param trackIds - Array of track IDs to separate stems for
+ * @param quality - Stem quality level (draft/hifi)
+ * @returns Map of track ID to their generated stem records
+ */
+export async function separateStemsParallel(
+  trackIds: string[],
+  quality: StemQuality = 'draft'
+): Promise<Map<string, StemRecord[]>> {
+  log('info', 'stems.separateParallel.start', {
+    trackCount: trackIds.length,
+    quality,
+  });
+
+  const startTime = Date.now();
+
+  // Process all stem separations in parallel
+  const promises = trackIds.map(trackId =>
+    separateStems(trackId, quality).catch(error => {
+      log('error', 'stems.separateParallel.failed', {
+        trackId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      // Return empty array for failed track
+      return [];
+    })
+  );
+
+  const results = await Promise.allSettled(promises);
+
+  // Collect results into a map
+  const stemsByTrack = new Map<string, StemRecord[]>();
+  
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    const trackId = trackIds[i];
+
+    if (result.status === 'fulfilled') {
+      stemsByTrack.set(trackId, result.value);
+    } else {
+      // Failed track - set empty array
+      stemsByTrack.set(trackId, []);
+      log('error', 'stems.separateParallel.rejected', {
+        trackId,
+        error: result.reason instanceof Error ? result.reason.message : 'Unknown error',
+      });
+    }
+  }
+
+  const processingTime = Date.now() - startTime;
+  const successfulTracks = stemsByTrack.size;
+  const totalStems = Array.from(stemsByTrack.values())
+    .reduce((sum, stems) => sum + stems.length, 0);
+
+  log('info', 'stems.separateParallel.completed', {
+    trackCount: trackIds.length,
+    successfulTracks,
+    totalStems,
+    processingTimeMs: processingTime,
+    avgMsPerTrack: processingTime / trackIds.length,
+  });
+
+  logTelemetry({
+    name: 'stems.separateParallel.completed',
+    properties: {
+      trackCount: trackIds.length,
+      successfulTracks,
+      totalStems,
+      processingTimeMs: processingTime,
+    },
+    measurements: {
+      avg_time_per_track_ms: processingTime / trackIds.length,
+      total_stems: totalStems,
+    },
+  });
+
+  return stemsByTrack;
 }
 
 export async function getDemucsStatus(): Promise<{ available: boolean; device?: string }> {

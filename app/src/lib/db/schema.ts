@@ -8,7 +8,15 @@ export const stemStatusEnum = pgEnum('stem_status', ['pending', 'processing', 'c
 export const stemTypeEnum = pgEnum('stem_type', ['vocals', 'drums', 'bass', 'other']);
 export const visibilityEnum = pgEnum('visibility', ['private', 'public']);
 export const stemQualityEnum = pgEnum('stem_quality', ['draft', 'hifi']);
-export const mixModeEnum = pgEnum('mix_mode', ['standard', 'vocals_over_instrumental', 'drum_swap']);
+export const mixModeEnum = pgEnum('mix_mode', [
+  'standard',
+  'vocals_over_instrumental',
+  'drum_swap',
+  'advanced',
+  'stem_based',
+  'multiband_compressed',
+  'dynamic_eq',
+]);
 export const planTierEnum = pgEnum('plan_tier', ['free', 'pro', 'studio']);
 export const collabStatusEnum = pgEnum('collab_status', ['pending', 'accepted', 'declined']);
 export const challengeStatusEnum = pgEnum('challenge_status', ['draft', 'active', 'closed']);

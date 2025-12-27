@@ -1,6 +1,6 @@
 import { startTrackAnalysis } from '@/lib/audio/analysis-service';
 import { separateStems } from '@/lib/audio/stems-service';
-import { renderMashup } from '@/lib/audio/mixing-service';
+import { renderAutoDjMix } from '@/lib/audio/auto-dj-service';
 
 type JobType = 'analysis' | 'stems' | 'mix';
 
@@ -57,7 +57,14 @@ queue.on('stems', async ({ trackId, quality }) => {
 });
 
 queue.on('mix', async ({ mashupId, inputTrackIds, durationSeconds, mixMode }) => {
-  await renderMashup(mashupId, inputTrackIds, durationSeconds, mixMode ?? 'standard');
+  const config: { trackIds: string[]; targetDurationSeconds: number; mixMode?: 'standard' | 'vocals_over_instrumental' | 'drum_swap' } = {
+    trackIds: inputTrackIds,
+    targetDurationSeconds: durationSeconds,
+  };
+  if (mixMode) {
+    config.mixMode = mixMode;
+  }
+  await renderAutoDjMix(mashupId, config);
 });
 
 export async function enqueueAnalysis(payload: Extract<JobPayload, { type: 'analysis' }>) {

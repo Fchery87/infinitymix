@@ -1,5 +1,5 @@
 'use client';
-
+ 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -10,6 +10,8 @@ import { FileUpload } from '@/components/file-upload';
 import { TrackList, Track } from '@/components/track-list';
 import { DurationPicker, DurationPreset } from '@/components/duration-picker';
 import { overallCompatibility, camelotCompatible } from '@/lib/utils/audio-compat';
+
+type TransitionStyle = 'smooth' | 'drop' | 'energy' | 'cut' | 'filter_sweep' | 'echo_reverb' | 'backspin' | 'tape_stop' | 'stutter_edit' | 'three_band_swap' | 'bass_drop' | 'snare_roll' | 'noise_riser';
 
 type MixMode = 'standard' | 'stem_mashup' | 'auto_dj';
 
@@ -26,6 +28,7 @@ export default function CreatePage() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isSmartMixing, setIsSmartMixing] = useState(false);
+  const [transitionStyles, setTransitionStyles] = useState<TransitionStyle[]>([]);
   
   // Stem mashup mode
   const [mixMode, setMixMode] = useState<MixMode>('standard');
@@ -33,7 +36,7 @@ export default function CreatePage() {
   const [instrumentalTrackId, setInstrumentalTrackId] = useState<string | null>(null);
   const [autoKeyMatch, setAutoKeyMatch] = useState(true);
   const [autoDjEnergyMode, setAutoDjEnergyMode] = useState<'steady' | 'build' | 'wave'>('steady');
-  const [autoDjTransitionStyle, setAutoDjTransitionStyle] = useState<'smooth' | 'drop' | 'energy' | 'cut'>('smooth');
+  const [autoDjTransitionStyle, setAutoDjTransitionStyle] = useState<TransitionStyle>('smooth');
   const [autoDjTargetBpm, setAutoDjTargetBpm] = useState<number | null>(null);
   const [preferStems, setPreferStems] = useState(true);
   const [keepOrder, setKeepOrder] = useState(false);
@@ -41,15 +44,8 @@ export default function CreatePage() {
   const [beatAlign, setBeatAlign] = useState(true);
   const [beatAlignMode, setBeatAlignMode] = useState<'downbeat' | 'any'>('downbeat');
   const [crossfadeEnabled, setCrossfadeEnabled] = useState(false);
-  const [crossfadeStyle, setCrossfadeStyle] = useState<'smooth' | 'drop' | 'energy' | 'cut'>('smooth');
+  const [crossfadeStyle, setCrossfadeStyle] = useState<TransitionStyle>('smooth');
   const [crossfadeDuration, setCrossfadeDuration] = useState(4);
-
-  const crossfadePresets: Record<typeof crossfadeStyle, number> = {
-    smooth: 4,
-    drop: 0.5,
-    energy: 2,
-    cut: 0,
-  };
 
   const scoreStyles = (score: number) => {
     if (score >= 0.8) return 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300';
@@ -78,6 +74,20 @@ export default function CreatePage() {
     void loadTracks();
   }, [loadTracks]);
 
+  useEffect(() => {
+    const loadTransitionStyles = async () => {
+      try {
+        const response = await fetch('/api/mashups/djmix', { cache: 'no-store' });
+        if (!response.ok) return;
+        const data = await response.json();
+        setTransitionStyles(data.transitionStyles || []);
+      } catch (error) {
+        console.error('Failed to load transition styles:', error);
+      }
+    };
+    void loadTransitionStyles();
+  }, []);
+ 
   useEffect(() => {
     const shouldPoll = uploadedTracks.some((track) => track.analysis_status === 'pending' || track.analysis_status === 'analyzing');
     if (!shouldPoll) return;
@@ -653,24 +663,37 @@ export default function CreatePage() {
                           </div>
                         </label>
                         {crossfadeEnabled && (
-                          <div className="grid gap-2 sm:grid-cols-2">
-                            <div className="flex flex-col gap-1">
-                              <span className="text-xs text-gray-400">Style</span>
-                              <select
-                                value={crossfadeStyle}
-                                onChange={(e) => {
-                                  const style = e.target.value as 'smooth' | 'drop' | 'energy' | 'cut';
-                                  setCrossfadeStyle(style);
-                                  setCrossfadeDuration(crossfadePresets[style]);
-                                }}
-                                className="w-full p-2 rounded-md bg-black/30 border border-white/10 text-white text-xs focus:border-primary outline-none"
-                              >
-                                <option value="smooth">Smooth (4s)</option>
-                                <option value="drop">Drop punch (0.5s)</option>
-                                <option value="energy">DJ style (2s)</option>
-                                <option value="cut">Hard cut</option>
-                              </select>
-                            </div>
+                           <div className="grid gap-2 sm:grid-cols-2">
+                             <div className="flex flex-col gap-1">
+                               <span className="text-xs text-gray-400">Style</span>
+                               <select
+                                 value={crossfadeStyle}
+                                 onChange={(e) => {
+                                   const styleId = e.target.value as TransitionStyle;
+                                   const selectedStyle = transitionStyles.find(s => s.id === styleId);
+                                   setCrossfadeStyle(styleId);
+                                   if (selectedStyle) {
+                                     setCrossfadeDuration(selectedStyle.duration);
+                                   }
+                                 }}
+                                 className="w-full p-2 rounded-md bg-black/30 border-white/10 text-white text-xs focus:border-primary outline-none"
+                               >
+                                 {transitionStyles.length === 0 ? (
+                                   <>
+                                     <option value="smooth">Smooth (4s)</option>
+                                     <option value="drop">Drop punch (0.5s)</option>
+                                     <option value="energy">DJ style (2s)</option>
+                                     <option value="cut">Hard cut</option>
+                                   </>
+                                 ) : (
+                                   transitionStyles.map((style) => (
+                                     <option key={style.id} value={style.id}>
+                                       {style.name} ({style.duration}s)
+                                     </option>
+                                   ))
+                                 )}
+                               </select>
+                             </div>
                             <div className="flex flex-col gap-1">
                               <span className="text-xs text-gray-400">Duration (s)</span>
                               <input
@@ -734,13 +757,18 @@ export default function CreatePage() {
                       <label className="text-xs text-gray-400">Transition style</label>
                       <select
                         value={autoDjTransitionStyle}
-                        onChange={(e) => setAutoDjTransitionStyle(e.target.value as typeof autoDjTransitionStyle)}
+                        onChange={(e) => setAutoDjTransitionStyle(e.target.value as TransitionStyle)}
                         className="w-full p-3 rounded-lg bg-black/30 border border-white/10 text-white text-sm focus:border-primary outline-none"
                       >
-                        <option value="smooth">Smooth</option>
-                        <option value="drop">Drop punch</option>
-                        <option value="energy">Energy</option>
-                        <option value="cut">Hard cut</option>
+                        {transitionStyles.length === 0 ? (
+                          <option value="smooth">Smooth</option>
+                        ) : (
+                          transitionStyles.map((style) => (
+                            <option key={style.id} value={style.id}>
+                              {style.name}
+                            </option>
+                          ))
+                        )}
                       </select>
                     </div>
                     <div className="flex flex-col gap-1">

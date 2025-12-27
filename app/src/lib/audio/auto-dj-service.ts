@@ -190,7 +190,12 @@ export type AutoDjTransitionStyle =
   | 'three_band_swap'
   | 'bass_drop'
   | 'snare_roll'
-  | 'noise_riser';
+  | 'noise_riser'
+  // New stem-based transitions
+  | 'vocal_handoff'
+  | 'bass_swap'
+  | 'reverb_wash'
+  | 'echo_out';
 
 export type TransitionStyle = AutoDjTransitionStyle;
 
@@ -218,6 +223,12 @@ export const CROSSFADE_PRESETS: Record<
   bass_drop: { duration: 0.5, curve1: 'exp', curve2: 'log' },
   snare_roll: { duration: 4, curve1: 'qsin', curve2: 'qsin' },
   noise_riser: { duration: 3, curve1: 'tri', curve2: 'exp' },
+
+  // New stem-based transitions
+  vocal_handoff: { duration: 3, curve1: 'qsin', curve2: 'qsin' },
+  bass_swap: { duration: 0.25, curve1: 'exp', curve2: 'exp' },
+  reverb_wash: { duration: 4, curve1: 'tri', curve2: 'exp' },
+  echo_out: { duration: 3, curve1: 'qsin', curve2: 'tri' },
 };
 
 type PhraseLength = 8 | 16 | 32;
@@ -1684,60 +1695,160 @@ export async function renderAutoDjMix(
 
           // Apply transition-specific effects
           switch (style) {
-            case 'filter_sweep':
-              // Highpass frequency sweep opening up the sound
+            case 'filter_sweep': {
+              // Highpass frequency sweep - use time relative to fadeout start
+              const effectStart = Math.max(
+                0,
+                trackPlan.fadeOutStart - trackPlan.startOffset
+              );
               chainParts.push(
-                `highpass=f='20+20000*t/${Math.max(duration, 1).toFixed(3)}'`
+                `highpass=f='20+20000*(t-${effectStart.toFixed(3)})/${Math.max(
+                  duration,
+                  1
+                ).toFixed(3)}':enable='gte(t,${effectStart.toFixed(3)})'`
               );
               break;
+            }
 
-            case 'echo_reverb':
-              // Echo effect on the outgoing track
-              chainParts.push('aecho=0.8:0.9:1000:0.3');
+            case 'echo_reverb': {
+              // Echo effect only during transition
+              const effectStart = Math.max(
+                0,
+                trackPlan.fadeOutStart - trackPlan.startOffset
+              );
+              chainParts.push(
+                `aecho=0.8:0.9:1000:0.3:enable='gte(t,${effectStart.toFixed(
+                  3
+                )})'`
+              );
               break;
+            }
 
             case 'backspin':
-              // Reverse effect before fade
+              // Reverse effect before fade - this one needs to apply to full audio
               chainParts.push('areverse');
               break;
 
             case 'tape_stop':
-              // Slow down effect (pitch down one octave)
+              // Slow down effect - needs special handling, keep as-is for now
               chainParts.push('asetrate=22050,aresample=44100');
               break;
 
             case 'stutter_edit':
-              // Rhythmic stutter using tempo changes
+              // Rhythmic stutter - needs to apply to full segment
               chainParts.push('atempo=1.5,atempo=0.66');
               break;
 
-            case 'three_band_swap':
-              // 3-band EQ manipulation
+            case 'three_band_swap': {
+              // 3-band EQ manipulation during transition
+              const effectStart = Math.max(
+                0,
+                trackPlan.fadeOutStart - trackPlan.startOffset
+              );
               chainParts.push(
-                'anequalizer=c0f=200:c0w=2:c0g=-10:c1f=2500:c1w=3:c1g=10:c2f=8000:c2w=4:c2g=-10'
+                `anequalizer=c0f=200:c0w=2:c0g=-10:c1f=2500:c1w=3:c1g=10:c2f=8000:c2w=4:c2g=-10:enable='gte(t,${effectStart.toFixed(
+                  3
+                )})'`
               );
               break;
+            }
 
-            case 'bass_drop':
-              // Cut bass momentarily
-              chainParts.push('lowpass=f=200');
-              break;
-
-            case 'snare_roll':
-              // Boost high frequencies
-              chainParts.push('highpass=f=2000');
-              break;
-
-            case 'noise_riser':
-              // Generate white noise with rising envelope for build-up effect
-              const riseTime = Math.floor(duration * 0.8);
-              const fadeTime = Math.floor(duration * 0.2);
-              // Note: noise_riser is complex - it needs to be generated separately and mixed
-              // For now, apply a highpass sweep as a simpler alternative
+            case 'bass_drop': {
+              // Cut bass only during transition
+              const effectStart = Math.max(
+                0,
+                trackPlan.fadeOutStart - trackPlan.startOffset
+              );
               chainParts.push(
-                `highpass=f='500+4000*t/${Math.max(duration, 1).toFixed(3)}'`
+                `lowpass=f=200:enable='gte(t,${effectStart.toFixed(3)})'`
               );
               break;
+            }
+
+            case 'snare_roll': {
+              // Boost high frequencies only during transition
+              const effectStart = Math.max(
+                0,
+                trackPlan.fadeOutStart - trackPlan.startOffset
+              );
+              chainParts.push(
+                `highpass=f=2000:enable='gte(t,${effectStart.toFixed(3)})'`
+              );
+              break;
+            }
+
+            case 'noise_riser': {
+              // Highpass sweep during transition
+              const effectStart = Math.max(
+                0,
+                trackPlan.fadeOutStart - trackPlan.startOffset
+              );
+              chainParts.push(
+                `highpass=f='500+4000*(t-${effectStart.toFixed(3)})/${Math.max(
+                  duration,
+                  1
+                ).toFixed(3)}':enable='gte(t,${effectStart.toFixed(3)})'`
+              );
+              break;
+            }
+
+            // NEW STEM-BASED TRANSITIONS
+            // These effects use 'enable' expression to only apply during the fadeout
+            // fadeOutStart is calculated relative to the trimmed segment (after atrim)
+            case 'vocal_handoff': {
+              // Calculate when the effect should start (relative to trimmed segment start)
+              const effectStart = Math.max(
+                0,
+                trackPlan.fadeOutStart - trackPlan.startOffset
+              );
+              // Apply small echo only during transition
+              chainParts.push(
+                `aecho=0.7:0.8:500:0.4:enable='gte(t,${effectStart.toFixed(
+                  3
+                )})'`
+              );
+              break;
+            }
+
+            case 'bass_swap': {
+              // Bass swap - cut bass only at the very end of the transition
+              const effectStart = Math.max(
+                0,
+                trackPlan.fadeOutStart - trackPlan.startOffset
+              );
+              chainParts.push(
+                `highpass=f=200:p=2:enable='gte(t,${effectStart.toFixed(3)})'`
+              );
+              break;
+            }
+
+            case 'reverb_wash': {
+              // Reverb wash - apply long decay echo only during transition
+              const effectStart = Math.max(
+                0,
+                trackPlan.fadeOutStart - trackPlan.startOffset
+              );
+              chainParts.push(
+                `aecho=0.8:0.95:1000|1500:0.5|0.3:enable='gte(t,${effectStart.toFixed(
+                  3
+                )})'`
+              );
+              break;
+            }
+
+            case 'echo_out': {
+              // Echo out - apply rhythmic delay during transition
+              const effectStart = Math.max(
+                0,
+                trackPlan.fadeOutStart - trackPlan.startOffset
+              );
+              chainParts.push(
+                `aecho=0.8:0.85:750:0.5:enable='gte(t,${effectStart.toFixed(
+                  3
+                )})'`
+              );
+              break;
+            }
 
             // Basic transitions (smooth, drop, cut, energy) use standard fade
             case 'smooth':

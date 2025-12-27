@@ -330,6 +330,25 @@ export type AutoDjConfig = {
   enableDynamicEQ?: boolean;
   loudnessNormalization?: 'ebu_r128' | 'peak' | 'none';
   targetLoudness?: number;
+
+  // BPM restoration settings
+  enableBpmRestoration?: boolean; // Enable/disable gradual BPM restoration after transitions (default: true)
+  bpmRestorationDurationSeconds?: number; // Duration of restoration ramp in seconds (default: 6)
+  bpmRestorationMinRatio?: number; // Only restore if tempo ratio differs by at least this amount (default: 0.05)
+};
+
+type TrackPlaybackPlan = {
+  id: string;
+  tempoRatio: number;
+  adjustedDuration: number;
+  maxSegmentDuration: number;
+  startOffset: number;
+  startOffsetSource: number;
+  startTime: number;
+  fadeInDuration: number;
+  fadeOutStart: number | null;
+  fadeOutDuration: number;
+  trimEnd: number;
 };
 
 export type TransitionPreviewConfig = {
@@ -422,6 +441,187 @@ function applyTempoRamp(
   return `atempo='1+(${clamped.toFixed(3)}-1)*min(t/${rampSeconds.toFixed(
     2
   )},1)'`;
+}
+
+/**
+ * Calculate restoration configuration for BPM restoration after transitions
+ */
+function calculateRestorationWindow(
+  trackPlan: TrackPlaybackPlan,
+  trackIndex: number,
+  config: AutoDjConfig,
+  restorationEnabled: boolean
+): {
+  shouldRestore: boolean;
+  restorationStartSeconds: number;
+  restorationDurationSeconds: number;
+  targetRatio: number;
+} {
+  if (!restorationEnabled) {
+    return {
+      shouldRestore: false,
+      restorationStartSeconds: 0,
+      restorationDurationSeconds: 0,
+      targetRatio: trackPlan.tempoRatio,
+    };
+  }
+
+  // Skip first track (no incoming transition to complete)
+  if (trackIndex === 0) {
+    return {
+      shouldRestore: false,
+      restorationStartSeconds: 0,
+      restorationDurationSeconds: 0,
+      targetRatio: trackPlan.tempoRatio,
+    };
+  }
+
+  // Skip if tempo ratio is already close to 1.0 (original BPM)
+  const minRatioThreshold = config.bpmRestorationMinRatio ?? 0.05;
+  if (Math.abs(trackPlan.tempoRatio - 1.0) < minRatioThreshold) {
+    return {
+      shouldRestore: false,
+      restorationStartSeconds: 0,
+      restorationDurationSeconds: 0,
+      targetRatio: trackPlan.tempoRatio,
+    };
+  }
+
+  // Restoration starts AFTER fade-in completes
+  const restorationStartSeconds = trackPlan.fadeInDuration;
+  const restorationDurationSeconds = config.bpmRestorationDurationSeconds ?? 6;
+
+  // Ensure restoration fits within track playback window
+  const trackPlaybackDuration = trackPlan.trimEnd - trackPlan.startOffset;
+  const availableSpace = trackPlaybackDuration - restorationStartSeconds;
+
+  if (availableSpace < restorationDurationSeconds + 2) {
+    // Not enough space - skip restoration
+    return {
+      shouldRestore: false,
+      restorationStartSeconds: 0,
+      restorationDurationSeconds: 0,
+      targetRatio: trackPlan.tempoRatio,
+    };
+  }
+
+  return {
+    shouldRestore: true,
+    restorationStartSeconds,
+    restorationDurationSeconds: Math.min(restorationDurationSeconds, availableSpace - 1),
+    targetRatio: trackPlan.tempoRatio,
+  };
+}
+
+const RESTORATION_STEPS = 4;
+
+function clampAtempoValue(value: number) {
+  if (!Number.isFinite(value)) return 1;
+  return Math.min(2, Math.max(0.5, value));
+}
+
+function appendBpmRestorationFilters(
+  filters: string[],
+  inputLabel: string,
+  trackPlan: TrackPlaybackPlan,
+  restorationConfig: {
+    restorationStartSeconds: number;
+    restorationDurationSeconds: number;
+    targetRatio: number;
+  },
+  index: number
+): string {
+  const trackLength = Math.max(0, trackPlan.trimEnd - trackPlan.startOffset);
+  const restorationStart = Math.max(0, restorationConfig.restorationStartSeconds);
+  const restorationDuration = Math.max(
+    0,
+    restorationConfig.restorationDurationSeconds
+  );
+  const restorationEnd = Math.min(
+    trackLength,
+    restorationStart + restorationDuration
+  );
+
+  if (restorationEnd <= restorationStart + 0.001) {
+    return inputLabel;
+  }
+
+  const targetMultiplierRaw = 1 / restorationConfig.targetRatio;
+  const targetMultiplier = clampAtempoValue(targetMultiplierRaw);
+  const stepCount = Math.max(2, RESTORATION_STEPS);
+  const stepDuration = (restorationEnd - restorationStart) / stepCount;
+
+  const segments: Array<{
+    start: number;
+    end: number;
+    multiplier: number;
+  }> = [];
+
+  if (restorationStart > 0.001) {
+    segments.push({ start: 0, end: restorationStart, multiplier: 1 });
+  }
+
+  for (let i = 0; i < stepCount; i++) {
+    const progress = (i + 1) / stepCount;
+    const eased = progress * progress;
+    const multiplier = clampAtempoValue(
+      1 + (targetMultiplier - 1) * eased
+    );
+    segments.push({
+      start: restorationStart + i * stepDuration,
+      end: restorationStart + (i + 1) * stepDuration,
+      multiplier,
+    });
+  }
+
+  if (restorationEnd < trackLength - 0.001) {
+    segments.push({
+      start: restorationEnd,
+      end: trackLength,
+      multiplier: targetMultiplier,
+    });
+  }
+
+  if (segments.length <= 1) {
+    return inputLabel;
+  }
+
+  const splitLabels = segments.map((_, idx) => `r${index}s${idx}`);
+  filters.push(
+    `[${inputLabel}]asplit=${segments.length}${splitLabels
+      .map((label) => `[${label}]`)
+      .join('')}`
+  );
+
+  const segmentLabels: string[] = [];
+  segments.forEach((segment, segIdx) => {
+    const segLabel = `r${index}seg${segIdx}`;
+    const parts = [
+      `atrim=start=${segment.start.toFixed(3)}:end=${segment.end.toFixed(3)}`,
+      'asetpts=PTS-STARTPTS',
+    ];
+    if (Math.abs(segment.multiplier - 1) > 0.001) {
+      parts.push(`atempo=${segment.multiplier.toFixed(3)}`);
+    }
+    filters.push(`[${splitLabels[segIdx]}]${parts.join(',')}[${segLabel}]`);
+    segmentLabels.push(`[${segLabel}]`);
+  });
+
+  const outputLabel = `r${index}out`;
+  filters.push(
+    `${segmentLabels.join('')}concat=n=${segmentLabels.length}:v=0:a=1[${outputLabel}]`
+  );
+
+  if (Math.abs(targetMultiplierRaw - targetMultiplier) > 0.001) {
+    log('warn', 'autoDj.bpmRestoration.clamped', {
+      trackId: trackPlan.id,
+      ratio: restorationConfig.targetRatio,
+      multiplier: targetMultiplierRaw,
+      clampedMultiplier: targetMultiplier,
+    });
+  }
+
+  return outputLabel;
 }
 
 function getBarDuration(targetBpm: number) {
@@ -1470,20 +1670,6 @@ export async function renderAutoDjMix(
       config.targetDurationSeconds / Math.max(1, orderedBuffers.length)
     );
 
-    type TrackPlaybackPlan = {
-      id: string;
-      tempoRatio: number;
-      adjustedDuration: number;
-      maxSegmentDuration: number;
-      startOffset: number;
-      startOffsetSource: number;
-      startTime: number;
-      fadeInDuration: number;
-      fadeOutStart: number | null;
-      fadeOutDuration: number;
-      trimEnd: number;
-    };
-
     // Calculate segment duration for each track based on target duration
     // Formula: totalDuration = N * segmentDuration - (N-1) * fadeDuration
     // So: segmentDuration = (totalDuration + (N-1) * fadeDuration) / N
@@ -1513,7 +1699,36 @@ export async function renderAutoDjMix(
       (track, idx) => {
         const info = trackInfos.find((t) => t.id === track.id);
         const bpm = info?.bpm ? Number(info.bpm) : targetBpm;
-        const tempoRatio = clampTempoRatio(calculateTempoRatio(bpm, targetBpm));
+
+        // Determine effective target BPM based on BPM restoration setting
+        // Default: restoration is enabled (opt-out with enableBpmRestoration: false)
+        const bpmRestorationEnabled =
+          config.enableBpmRestoration !== false && !config.tempoRampSeconds;
+        let effectiveTargetBpm: number;
+        if (idx === 0) {
+          // First track: use global target BPM
+          effectiveTargetBpm = targetBpm;
+        } else if (bpmRestorationEnabled) {
+          // Subsequent tracks with restoration enabled: match to previous track's ORIGINAL BPM
+          const prevTrackInfo = trackInfos.find((t) => t.id === orderedBuffers[idx - 1].id);
+          const prevTrackOriginalBpm = prevTrackInfo?.bpm ? Number(prevTrackInfo.bpm) : targetBpm;
+          effectiveTargetBpm = prevTrackOriginalBpm;
+        } else {
+          // Restoration disabled: use global target BPM (current behavior)
+          effectiveTargetBpm = targetBpm;
+        }
+
+        const tempoRatio = clampTempoRatio(calculateTempoRatio(bpm, effectiveTargetBpm));
+
+        // Log BPM matching decision
+        log('info', 'autoDj.bpm.matching', {
+          trackId: track.id,
+          trackIndex: idx,
+          originalBpm: bpm,
+          effectiveTargetBpm,
+          tempoRatio: Number(tempoRatio.toFixed(4)),
+          matchingTo: idx === 0 ? 'global-target' : bpmRestorationEnabled ? 'previous-track-original' : 'global-target'
+        });
         const rawDuration = info?.durationSeconds
           ? Number(info.durationSeconds)
           : fallbackDuration;
@@ -1636,50 +1851,80 @@ export async function renderAutoDjMix(
 
     // Build FFmpeg filter graph using phrase-aware timings
     playbackPlans.forEach((trackPlan, idx) => {
-      const baseParts: string[] = [];
+      // Tempo adjustment with optional BPM restoration
+      // Note: BPM restoration is enabled by default (enableBpmRestoration !== false)
+      const bpmRestorationEnabled =
+        config.enableBpmRestoration !== false && !config.tempoRampSeconds;
+      if (
+        config.tempoRampSeconds &&
+        config.enableBpmRestoration !== false &&
+        idx === 0
+      ) {
+        log('warn', 'autoDj.config.conflict', {
+          message:
+            'tempoRampSeconds and enableBpmRestoration are mutually exclusive. Using tempoRampSeconds.',
+          trackId: trackPlan.id,
+        });
+      }
+
+      // Calculate restoration configuration
+      const restorationConfig = calculateRestorationWindow(
+        trackPlan,
+        idx,
+        config,
+        bpmRestorationEnabled
+      );
 
       // Initial loudness normalization (pre-processing)
-      baseParts.push('loudnorm=I=-14:TP=-1:LRA=11');
-
-      // Tempo adjustment
-      const atempo = applyTempoRamp(
-        trackPlan.tempoRatio,
-        config.tempoRampSeconds
+      const normLabel = `norm${idx}`;
+      filters.push(
+        `[${idx}:a]loudnorm=I=-14:TP=-1:LRA=11[${normLabel}]`
       );
-      if (atempo) baseParts.push(atempo);
+
+      // Apply base tempo adjustment
+      const tempoLabel = `tempo${idx}`;
+      const tempoFilter = config.tempoRampSeconds
+        ? applyTempoRamp(trackPlan.tempoRatio, config.tempoRampSeconds)
+        : buildAtempoChain(trackPlan.tempoRatio);
+      if (tempoFilter) {
+        filters.push(`[${normLabel}]${tempoFilter}[${tempoLabel}]`);
+      } else {
+        filters.push(`[${normLabel}]anull[${tempoLabel}]`);
+      }
 
       const trimEnd = Math.max(trackPlan.startOffset + 0.1, trackPlan.trimEnd);
-      baseParts.push(
-        `atrim=start=${trackPlan.startOffset.toFixed(3)}:end=${trimEnd.toFixed(
+      const trimLabel = `trim${idx}`;
+      filters.push(
+        `[${tempoLabel}]atrim=start=${trackPlan.startOffset.toFixed(
           3
-        )}`
+        )}:end=${trimEnd.toFixed(3)},asetpts=PTS-STARTPTS[${trimLabel}]`
       );
-      baseParts.push('asetpts=PTS-STARTPTS');
 
-      // Dynamic EQ for frequency masking prevention
-      if (config.enableDynamicEQ) {
-        // Add dynamic EQ to prevent vocal clashes
-        baseParts.push(`equalizer=f=500:t=h:width=200:g=-2`); // Cut low-mids
-        baseParts.push(`equalizer=f=2500:t=h:width=1000:g=-2`); // Cut vocal presence
-      }
-
-      // Multiband compression for control
-      if (config.enableMultibandCompression) {
-        baseParts.push(
-          `lowpass=f=250,acompressor=threshold=-24db:ratio=2:attack=20ms:release=100ms`
-        );
-        baseParts.push(
-          `lowpass=f=2500,highpass=f=250,acompressor=threshold=-20db:ratio=3:attack=20ms:release=100ms`
-        );
-        baseParts.push(
-          `highpass=f=4000,acompressor=threshold=-18db:ratio=4:attack=20ms:release=100ms`
+      let tempoOutputLabel = trimLabel;
+      if (restorationConfig.shouldRestore) {
+        tempoOutputLabel = appendBpmRestorationFilters(
+          filters,
+          trimLabel,
+          trackPlan,
+          restorationConfig,
+          idx
         );
       }
 
-      if (trackPlan.fadeInDuration > 0) {
-        baseParts.push(
-          `afade=t=in:st=0:d=${trackPlan.fadeInDuration.toFixed(3)}`
-        );
+      // Log restoration plan for debugging
+      if (restorationConfig.shouldRestore) {
+        const trackInfo = trackInfos.find((t) => t.id === trackPlan.id);
+        const originalBpm = trackInfo?.bpm ? Number(trackInfo.bpm) : 120;
+        log('info', 'autoDj.bpmRestoration.planned', {
+          trackId: trackPlan.id,
+          trackIndex: idx,
+          fromBpm: (restorationConfig.targetRatio * originalBpm).toFixed(1),
+          toBpm: originalBpm,
+          fromRatio: restorationConfig.targetRatio,
+          toRatio: 1.0,
+          restorationStart: restorationConfig.restorationStartSeconds,
+          restorationDuration: restorationConfig.restorationDurationSeconds,
+        });
       }
 
       const transitionForThisTrack = playbackPlans[idx + 1]
@@ -1699,18 +1944,18 @@ export async function renderAutoDjMix(
 
         switch (style) {
           case 'backspin':
-            // Reverse effect before fade - this one needs to apply to full audio
-            fullSegmentEffects.push('areverse');
+            // Reverse effect during transition window
+            transitionEffects.push('areverse');
             break;
 
           case 'tape_stop':
-            // Slow down effect - needs special handling, keep as-is for now
-            fullSegmentEffects.push('asetrate=22050,aresample=44100');
+            // Slow down effect during transition window
+            transitionEffects.push('asetrate=22050,aresample=44100');
             break;
 
           case 'stutter_edit':
-            // Rhythmic stutter - needs to apply to full segment
-            fullSegmentEffects.push('atempo=1.5,atempo=0.66');
+            // Rhythmic stutter during transition window
+            transitionEffects.push('atempo=1.5,atempo=0.66');
             break;
 
           case 'filter_sweep':
@@ -1800,11 +2045,42 @@ export async function renderAutoDjMix(
         }
       }
 
-      baseParts.push(...fullSegmentEffects);
-      baseParts.push('volume=1');
+      const postParts: string[] = [];
+
+      // Dynamic EQ for frequency masking prevention
+      if (config.enableDynamicEQ) {
+        postParts.push(`equalizer=f=500:t=h:width=200:g=-2`); // Cut low-mids
+        postParts.push(`equalizer=f=2500:t=h:width=1000:g=-2`); // Cut vocal presence
+      }
+
+      // Multiband compression for control
+      if (config.enableMultibandCompression) {
+        postParts.push(
+          `lowpass=f=250,acompressor=threshold=-24db:ratio=2:attack=20ms:release=100ms`
+        );
+        postParts.push(
+          `lowpass=f=2500,highpass=f=250,acompressor=threshold=-20db:ratio=3:attack=20ms:release=100ms`
+        );
+        postParts.push(
+          `highpass=f=4000,acompressor=threshold=-18db:ratio=4:attack=20ms:release=100ms`
+        );
+      }
+
+      if (trackPlan.fadeInDuration > 0) {
+        postParts.push(
+          `afade=t=in:st=0:d=${trackPlan.fadeInDuration.toFixed(3)}`
+        );
+      }
+
+      postParts.push(...fullSegmentEffects);
+      postParts.push('volume=1');
 
       const baseLabel = `base${idx}`;
-      filters.push(`[${idx}:a]${baseParts.join(',')}[${baseLabel}]`);
+      if (postParts.length > 0) {
+        filters.push(`[${tempoOutputLabel}]${postParts.join(',')}[${baseLabel}]`);
+      } else {
+        filters.push(`[${tempoOutputLabel}]anull[${baseLabel}]`);
+      }
 
       let outputLabel = baseLabel;
 
@@ -1880,8 +2156,35 @@ export async function renderAutoDjMix(
       `${mixInputs}amix=inputs=${playbackPlans.length}:duration=longest:normalize=0[mixed]`
     );
 
+    const estimatedEnd = playbackPlans.reduce(
+      (max, plan) =>
+        Math.max(
+          max,
+          plan.startTime + Math.max(plan.trimEnd - plan.startOffset, 0)
+        ),
+      0
+    );
+    const safeDuration = Math.max(
+      30,
+      Math.round(Math.max(config.targetDurationSeconds, estimatedEnd))
+    );
+    const endFadeDuration = Math.min(
+      4,
+      Math.max(1, config.fadeDurationSeconds ?? 3)
+    );
+    const endFadeStart = Math.max(0, safeDuration - endFadeDuration);
+
     // Final processing chain (after all tracks are mixed)
     const finalFilters: string[] = [];
+
+    // Fade out at end of mix to avoid hard cutoff
+    if (endFadeDuration > 0) {
+      finalFilters.push(
+        `afade=t=out:st=${endFadeStart.toFixed(
+          3
+        )}:d=${endFadeDuration.toFixed(3)}`
+      );
+    }
 
     // Loudness normalization (two-pass style)
     if (config.loudnessNormalization === 'ebu_r128') {
@@ -1901,19 +2204,6 @@ export async function renderAutoDjMix(
       const finalFilter = finalFilters.join(',');
       filters.push(`[mixed]${finalFilter}[final]`);
     }
-
-    const estimatedEnd = playbackPlans.reduce(
-      (max, plan) =>
-        Math.max(
-          max,
-          plan.startTime + Math.max(plan.trimEnd - plan.startOffset, 0)
-        ),
-      0
-    );
-    const safeDuration = Math.max(
-      30,
-      Math.round(Math.max(config.targetDurationSeconds, estimatedEnd))
-    );
 
     const executeMix = async (filterGraph: string[], duration: number) => {
       const cmd = ffmpeg();
@@ -1989,16 +2279,34 @@ export async function renderAutoDjMix(
         `${mixInputs}amix=inputs=${orderedBuffers.length}:duration=longest:normalize=0[mixed]`
       );
 
+      const fallbackFadeLabel = 'mixed_fade';
+      if (endFadeDuration > 0) {
+        fallbackFilters.push(
+          `[mixed]afade=t=out:st=${endFadeStart.toFixed(
+            3
+          )}:d=${endFadeDuration.toFixed(3)}[${fallbackFadeLabel}]`
+        );
+      }
+      const fallbackInputLabel =
+        endFadeDuration > 0 ? fallbackFadeLabel : 'mixed';
+
       // Add final processing to fallback
+      let fallbackFinalInput = fallbackInputLabel;
       if (config.loudnessNormalization === 'ebu_r128') {
         const target = config.targetLoudness ?? -23;
         fallbackFilters.push(
-          `[mixed]loudnorm=I=${target}:TP=-1.5:LRA=11[final]`
+          `[${fallbackInputLabel}]loudnorm=I=${target}:TP=-1.5:LRA=11[fallback_norm]`
         );
+        fallbackFinalInput = 'fallback_norm';
       } else if (config.loudnessNormalization === 'peak') {
-        fallbackFilters.push(`[mixed]loudnorm=TP=-1.5:I=-14:LRA=11[final]`);
+        fallbackFilters.push(
+          `[${fallbackInputLabel}]loudnorm=TP=-1.5:I=-14:LRA=11[fallback_norm]`
+        );
+        fallbackFinalInput = 'fallback_norm';
       }
-      fallbackFilters.push(`[mixed]alimiter=level_in=1:level_out=0.95[final]`);
+      fallbackFilters.push(
+        `[${fallbackFinalInput}]alimiter=level_in=1:level_out=0.95[final]`
+      );
 
       return fallbackFilters;
     };

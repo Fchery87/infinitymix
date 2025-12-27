@@ -73,14 +73,12 @@ export function AudioPlayer({ trackName, duration, isPlaying, src, onClose, onTo
 
   React.useEffect(() => {
     const audio = audioRef.current;
-    if (!audio) return;
+    if (!audio || !src) return;
+    // Only reset when src changes, not when isPlaying changes
     setProgress(0);
     setCurrentTime(0);
-    if (isPlaying && src) {
-      audio.currentTime = 0;
-      void audio.play().catch(() => undefined);
-    }
-  }, [src, isPlaying]);
+    audio.currentTime = 0;
+  }, [src]);
 
   const handleScrub = (event: React.MouseEvent<HTMLDivElement>) => {
     const audio = audioRef.current;
@@ -88,6 +86,19 @@ export function AudioPlayer({ trackName, duration, isPlaying, src, onClose, onTo
     const rect = event.currentTarget.getBoundingClientRect();
     const percent = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
     audio.currentTime = percent * (audio.duration || displayDuration);
+  };
+
+  const handleSkipBack = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.currentTime = Math.max(0, audio.currentTime - 10);
+  };
+
+  const handleSkipForward = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const maxTime = audio.duration || displayDuration;
+    audio.currentTime = Math.min(maxTime, audio.currentTime + 10);
   };
 
   const hasSource = Boolean(src);
@@ -127,10 +138,16 @@ export function AudioPlayer({ trackName, duration, isPlaying, src, onClose, onTo
             {/* Controls & Progress */}
             <div className="flex-1 flex flex-col items-center gap-2">
               <div className="flex items-center gap-4">
-                <button className="text-gray-400 hover:text-white transition-colors" disabled>
+                <button
+                  onClick={handleSkipBack}
+                  className="text-gray-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={!hasSource}
+                  aria-label="Skip back 10 seconds"
+                  title="Skip back 10 seconds"
+                >
                   <SkipBack className="w-5 h-5" />
                 </button>
-                <button 
+                <button
                   onClick={onTogglePlay}
                   className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform active:scale-95"
                   disabled={!hasSource}
@@ -141,7 +158,13 @@ export function AudioPlayer({ trackName, duration, isPlaying, src, onClose, onTo
                     <Play className="w-5 h-5 fill-current ml-0.5" />
                   )}
                 </button>
-                <button className="text-gray-400 hover:text-white transition-colors" disabled>
+                <button
+                  onClick={handleSkipForward}
+                  className="text-gray-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={!hasSource}
+                  aria-label="Skip forward 10 seconds"
+                  title="Skip forward 10 seconds"
+                >
                   <SkipForward className="w-5 h-5" />
                 </button>
               </div>

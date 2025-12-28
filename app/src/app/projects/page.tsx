@@ -4,8 +4,10 @@ import { useState, useEffect } from 'react';
 import { ProjectGrid } from '@/components/projects/project-grid';
 import { CreateProjectModal } from '@/components/projects/create-project-modal';
 import { Project } from '@/lib/db/schema';
-import { Plus, Loader2, Music, Sparkles } from 'lucide-react';
+import { Plus, Loader2, Music, Sparkles, Zap } from 'lucide-react';
 import { motion } from 'framer-motion';
+import Link from 'next/link';
+import { Button } from '@/components/ui/button';
 
 const STATUS_FILTERS = [
   { value: 'all', label: 'All Projects' },
@@ -59,17 +61,48 @@ export default function ProjectsPage() {
   }, [activeFilter, projects]);
 
   return (
-    <div className="relative min-h-screen overflow-hidden">
+    <div className="min-h-screen font-sans text-foreground relative z-0">
       {/* Background Elements */}
-      <div className="absolute inset-0 bg-gradient-to-b from-background via-background to-black" />
+      <div className="absolute inset-0 z-0 bg-gradient-to-b from-background via-background to-black pointer-events-none" />
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[500px] bg-primary/15 rounded-full blur-[120px] opacity-20 pointer-events-none" />
       <div className="absolute bottom-0 right-0 w-[600px] h-[400px] bg-blue-600/10 rounded-full blur-[100px] opacity-15 pointer-events-none" />
       <div className="absolute top-1/3 left-0 w-[500px] h-[500px] bg-cyan-500/5 rounded-full blur-[100px] opacity-10 pointer-events-none" />
 
-      <div className="relative z-10 mx-auto max-w-7xl px-6 py-12 lg:py-16">
+      {/* Navbar */}
+      <header className="fixed top-0 w-full z-50 border-b border-white/5 bg-background/60 backdrop-blur-lg">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between items-center h-20">
+            <Link href="/create">
+              <div className="flex items-center group cursor-pointer">
+                <div className="w-10 h-10 bg-gradient-to-tr from-primary to-orange-600 rounded-xl flex items-center justify-center mr-3 shadow-lg group-hover:shadow-primary/50 transition-all duration-300">
+                  <Zap className="w-6 h-6 text-white fill-white" />
+                </div>
+                <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400 group-hover:to-white transition-all">InfinityMix</h1>
+              </div>
+            </Link>
+            <nav className="flex items-center space-x-6">
+              <Link href="/projects">
+                <Button variant="ghost" className="text-white">Projects</Button>
+              </Link>
+              <Link href="/mashups">
+                <Button variant="ghost" className="text-gray-400 hover:text-white hover:bg-white/5">My Mashups</Button>
+              </Link>
+              <Link href="/profile">
+                <Button variant="ghost" className="text-gray-400 hover:text-white hover:bg-white/5">Profile</Button>
+              </Link>
+              <Link href="/login">
+                <Button variant="outline" className="border-white/10 hover:bg-white/5 hover:text-white">Sign Out</Button>
+              </Link>
+            </nav>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="relative z-10 pt-32 pb-16 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto">
         {/* Header */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 1, y: 0 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
           className="mb-12"
@@ -104,25 +137,31 @@ export default function ProjectsPage() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.1 }}
-            className="flex flex-wrap gap-2"
+            className="flex flex-wrap gap-3"
           >
             {STATUS_FILTERS.map((filter) => (
-              <button
+              <motion.button
                 key={filter.value}
                 onClick={() => setActiveFilter(filter.value)}
-                className={`rounded-full px-4 py-2 text-sm font-medium transition-all ${
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                className={`relative rounded-full px-5 py-2.5 text-sm font-semibold transition-all overflow-hidden group ${
                   activeFilter === filter.value
-                    ? 'bg-primary/20 text-primary border border-primary/30 shadow-lg shadow-primary/20'
-                    : 'bg-white/5 text-gray-400 border border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20'
+                    ? 'bg-gradient-to-r from-primary/20 to-orange-500/10 text-primary border border-primary/40 shadow-lg shadow-primary/25'
+                    : 'bg-white/5 text-gray-300 border border-white/10 hover:bg-white/8 hover:text-white hover:border-white/20'
                 }`}
               >
-                {filter.label}
+                <span className="relative z-10">{filter.label}</span>
                 {filter.value !== 'all' && (
-                  <span className="ml-2 text-xs opacity-70">
+                  <span className={`ml-2 text-xs font-medium px-2 py-0.5 rounded-full ${
+                    activeFilter === filter.value
+                      ? 'bg-primary/30 text-primary'
+                      : 'bg-white/5 text-gray-400'
+                  }`}>
                     {projects.filter((p) => p.status === filter.value).length}
                   </span>
                 )}
-              </button>
+              </motion.button>
             ))}
           </motion.div>
         </motion.div>
@@ -167,7 +206,7 @@ export default function ProjectsPage() {
         ) : (
           <ProjectGrid projects={filteredProjects} />
         )}
-      </div>
+      </main>
 
       {/* Create Project Modal */}
       <CreateProjectModal

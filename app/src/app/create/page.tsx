@@ -472,7 +472,22 @@ export default function CreatePage() {
           </p>
         </motion.div>
 
-        <div className="grid lg:grid-cols-12 gap-8">
+        {/* Project Context Bar */}
+        <motion.div 
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.1 }}
+          className="mb-6 max-w-md mx-auto relative z-30"
+        >
+          <ProjectSelector
+            selectedProjectId={selectedProjectId}
+            onProjectChange={setSelectedProjectId}
+            onCreateNew={() => setIsProjectModalOpen(true)}
+            className="w-full"
+          />
+        </motion.div>
+
+        <div className="grid lg:grid-cols-12 gap-8 relative z-10">
           
           {/* Upload Zone (Left/Top) */}
           <motion.div 
@@ -484,14 +499,6 @@ export default function CreatePage() {
             <FileUpload 
                 onUpload={handleFileUpload} 
                 isUploading={isUploading} 
-            />
-            
-            {/* Project Selector */}
-            <ProjectSelector
-              selectedProjectId={selectedProjectId}
-              onProjectChange={setSelectedProjectId}
-              onCreateNew={() => setIsProjectModalOpen(true)}
-              className="mt-4"
             />
             
             {isLoadingTracks && (

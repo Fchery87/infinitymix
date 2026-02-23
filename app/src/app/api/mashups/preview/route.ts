@@ -2,11 +2,22 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { uploadedTracks } from '@/lib/db/schema';
-import { mixToBuffer, PreparedTrack } from '@/lib/audio/mixing-service';
+import { mixToBuffer } from '@/lib/audio/mixing-service';
 import { getStorage } from '@/lib/storage';
 import { eq, and, inArray } from 'drizzle-orm';
 
 const MAX_DURATION = 30;
+
+/**
+ * Track data for mixing
+ */
+interface TrackForMixing {
+  id: string;
+  storageUrl: string;
+  mimeType: string;
+  bpm: number | null;
+  buffer: Buffer;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -36,15 +47,17 @@ export async function POST(request: NextRequest) {
     const storage = await getStorage();
     if (!storage.getFile) return NextResponse.json({ error: 'Storage driver cannot read files' }, { status: 500 });
 
-    const tracks: PreparedTrack[] = [];
+    const tracks: TrackForMixing[] = [];
+    const buffers: Buffer[] = [];
     for (const r of records) {
       const fetched = await storage.getFile(r.storageUrl);
       if (!fetched?.buffer) return NextResponse.json({ error: 'Failed to fetch track audio' }, { status: 500 });
+      buffers.push(fetched.buffer);
       tracks.push({ id: r.id, storageUrl: r.storageUrl, mimeType: fetched.mimeType || r.mimeType, bpm: r.bpm ? Number(r.bpm) : null, buffer: fetched.buffer });
     }
 
-    const buffer = await mixToBuffer(tracks, safeDuration, mixMode);
-    return new NextResponse(buffer, {
+    const result = await mixToBuffer(buffers, { duration: safeDuration });
+    return new NextResponse(result.buffer, {
       status: 200,
       headers: {
         'Content-Type': 'audio/mpeg',

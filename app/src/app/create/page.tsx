@@ -1,6 +1,6 @@
 'use client';
- 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Zap, Mic2, Music2, ArrowRight } from 'lucide-react';
@@ -12,6 +12,19 @@ import { DurationPicker, DurationPreset } from '@/components/duration-picker';
 import { overallCompatibility, camelotCompatible } from '@/lib/utils/audio-compat';
 import { ProjectSelector } from '@/components/projects/project-selector';
 import { CreateProjectModal } from '@/components/projects/create-project-modal';
+import { getPublicAudioPipelineFeatureFlags } from '@/lib/audio/feature-flags';
+import { startResumableUpload, buildTusMetadata } from '@/lib/audio/resumable-upload';
+import { collectBrowserAnalysisHintsForUpload } from '@/lib/audio/browser-analysis/client';
+import {
+  buildTransitionAutomationPlan,
+  createPreviewGraph,
+  getPreviewGraphCapabilities,
+  type PreviewGraph,
+  type PreviewGraphCapabilities,
+  type PreviewTransitionStyle,
+} from '@/lib/audio/preview-graph';
+import { emitAudioPipelineTelemetry } from '@/lib/audio/telemetry';
+import { recordPreviewQaTelemetry } from '@/lib/audio/preview-qa-telemetry';
 
 type TransitionStyle =
   | 'smooth'
@@ -32,12 +45,36 @@ type TransitionStyle =
   | 'reverb_wash'
   | 'echo_out';
 
+type TransitionStyleOption = {
+  id: TransitionStyle;
+  name: string;
+  description?: string;
+  category?: string;
+  duration?: number;
+};
+
+type StylePackOption = {
+  id: string;
+  name: string;
+  description?: string;
+  schemaVersion: string;
+  isBuiltIn?: boolean;
+  energyProfile: 'steady' | 'build' | 'wave';
+  defaultTransitionStyle: TransitionStyle;
+};
+
 type MixMode = 'standard' | 'stem_mashup' | 'auto_dj';
+type TrackAnalysisFilter = 'all' | 'browser_hint' | 'standard';
 
 export default function CreatePage() {
+  const audioFeatureFlags = getPublicAudioPipelineFeatureFlags();
   const [isAuthenticated] = useState(true); // Auto-logged in for development
   const [uploadedTracks, setUploadedTracks] = useState<Track[]>([]);
+  const [isAdminUser, setIsAdminUser] = useState(false);
+  const [trackAnalysisFilter, setTrackAnalysisFilter] = useState<TrackAnalysisFilter>('all');
+  const [trackQualityCounts, setTrackQualityCounts] = useState<Record<string, number>>({});
   const [isUploading, setIsUploading] = useState(false);
+  const [preAnalysisMessage, setPreAnalysisMessage] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoadingTracks, setIsLoadingTracks] = useState(false);
   const [durationPreset, setDurationPreset] = useState<DurationPreset>('2_minutes');
@@ -46,8 +83,13 @@ export default function CreatePage() {
   const [generationMessage, setGenerationMessage] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
+  const [isBrowserPreviewing, setIsBrowserPreviewing] = useState(false);
+  const [browserPreviewMessage, setBrowserPreviewMessage] = useState<string | null>(null);
+  const [browserPreviewCapabilities, setBrowserPreviewCapabilities] = useState<PreviewGraphCapabilities | null>(null);
   const [isSmartMixing, setIsSmartMixing] = useState(false);
-  const [transitionStyles, setTransitionStyles] = useState<TransitionStyle[]>([]);
+  const [transitionStyles, setTransitionStyles] = useState<TransitionStyleOption[]>([]);
+  const [stylePacks, setStylePacks] = useState<StylePackOption[]>([]);
+  const [selectedStylePackId, setSelectedStylePackId] = useState<string | null>(null);
   
   // Project-related state
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -69,6 +111,10 @@ export default function CreatePage() {
   const [crossfadeEnabled, setCrossfadeEnabled] = useState(false);
   const [crossfadeStyle, setCrossfadeStyle] = useState<TransitionStyle>('smooth');
   const [crossfadeDuration, setCrossfadeDuration] = useState(4);
+  const [browserPreviewTrackAId, setBrowserPreviewTrackAId] = useState<string | null>(null);
+  const [browserPreviewTrackBId, setBrowserPreviewTrackBId] = useState<string | null>(null);
+  const browserPreviewGraphRef = useRef<PreviewGraph | null>(null);
+  const browserPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const scoreStyles = (score: number) => {
     if (score >= 0.8) return 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300';
@@ -76,26 +122,97 @@ export default function CreatePage() {
     return 'bg-red-500/10 border-red-500/30 text-red-200';
   };
 
+  const clearBrowserPreviewTimer = () => {
+    if (browserPreviewTimerRef.current) {
+      clearTimeout(browserPreviewTimerRef.current);
+      browserPreviewTimerRef.current = null;
+    }
+  };
+
+  const stopBrowserPreviewPlayback = useCallback(() => {
+    if (browserPreviewTimerRef.current) {
+      clearTimeout(browserPreviewTimerRef.current);
+      browserPreviewTimerRef.current = null;
+    }
+    browserPreviewGraphRef.current?.stopPlayback();
+    setIsBrowserPreviewing(false);
+  }, []);
+
+  const ensureBrowserPreviewGraph = useCallback(async () => {
+    if (browserPreviewGraphRef.current) {
+      return browserPreviewGraphRef.current;
+    }
+    const graph = await createPreviewGraph();
+    browserPreviewGraphRef.current = graph;
+    setBrowserPreviewCapabilities(graph.capabilities);
+    emitAudioPipelineTelemetry('preview_graph.capability_probe', {
+      area: 'preview',
+      status: graph.capabilities.available ? 'success' : 'error',
+      source: 'create_page',
+      webAudioAvailable: graph.capabilities.webAudioAvailable,
+      toneAvailable: graph.capabilities.toneAvailable,
+      reason: graph.capabilities.reason,
+    });
+    recordPreviewQaTelemetry(
+      graph.capabilities.available ? 'capability_probe' : 'capability_unavailable',
+      graph.capabilities.reason
+    );
+    return graph;
+  }, []);
+
   const loadTracks = useCallback(async () => {
     try {
       setIsLoadingTracks(true);
-      const response = await fetch('/api/audio/pool', { cache: 'no-store' });
+      const params = new URLSearchParams();
+      if (trackAnalysisFilter !== 'all') {
+        params.set('analysisQuality', trackAnalysisFilter);
+      }
+      const query = params.toString();
+      const response = await fetch(`/api/audio/pool${query ? `?${query}` : ''}`, { cache: 'no-store' });
       if (!response.ok) {
         throw new Error('Failed to load tracks');
       }
-      const data: Track[] = await response.json();
-      setUploadedTracks(data);
-      setSelectedTrackIds((current) => current.filter((id) => data.some((track) => track.id === id && track.analysis_status === 'completed')));
+      const data = await response.json();
+      const tracks = Array.isArray(data) ? data : data.tracks || [];
+      setTrackQualityCounts(
+        data && typeof data === 'object' && data.debug && typeof data.debug === 'object'
+          ? data.debug.qualityCounts || {}
+          : {}
+      );
+      setUploadedTracks(tracks);
+      setSelectedTrackIds((current) => current.filter((id) => tracks.some((track: Track) => track.id === id && track.analysis_status === 'completed')));
     } catch (error) {
       console.error(error);
     } finally {
       setIsLoadingTracks(false);
     }
-  }, []);
+  }, [trackAnalysisFilter]);
 
   useEffect(() => {
     void loadTracks();
   }, [loadTracks]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadAdminState = async () => {
+      try {
+        const res = await fetch('/api/admin/session', { cache: 'no-store' });
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!cancelled) {
+          setIsAdminUser(Boolean(json?.isAdmin));
+        }
+      } catch {
+        if (!cancelled) {
+          setIsAdminUser(false);
+        }
+      }
+    };
+    void loadAdminState();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const loadTransitionStyles = async () => {
@@ -103,12 +220,41 @@ export default function CreatePage() {
         const response = await fetch('/api/mashups/djmix', { cache: 'no-store' });
         if (!response.ok) return;
         const data = await response.json();
-        setTransitionStyles(data.transitionStyles || []);
+        setTransitionStyles((data.transitionStyles || []) as TransitionStyleOption[]);
+        setStylePacks((data.stylePacks || []) as StylePackOption[]);
       } catch (error) {
         console.error('Failed to load transition styles:', error);
       }
     };
     void loadTransitionStyles();
+  }, []);
+
+  useEffect(() => {
+    if (!audioFeatureFlags.toneJsPreviewGraph) return;
+    const capabilitySnapshot = getPreviewGraphCapabilities();
+    setBrowserPreviewCapabilities(capabilitySnapshot);
+    emitAudioPipelineTelemetry('preview_graph.capability_detected', {
+      area: 'preview',
+      status: capabilitySnapshot.available ? 'success' : 'error',
+      source: 'create_page_preflight',
+      webAudioAvailable: capabilitySnapshot.webAudioAvailable,
+      reason: capabilitySnapshot.reason,
+    });
+    recordPreviewQaTelemetry(
+      capabilitySnapshot.available ? 'capability_detected' : 'capability_unavailable',
+      capabilitySnapshot.reason
+    );
+  }, [audioFeatureFlags.toneJsPreviewGraph]);
+
+  useEffect(() => {
+    return () => {
+      if (browserPreviewTimerRef.current) {
+        clearTimeout(browserPreviewTimerRef.current);
+        browserPreviewTimerRef.current = null;
+      }
+      browserPreviewGraphRef.current?.dispose();
+      browserPreviewGraphRef.current = null;
+    };
   }, []);
  
   useEffect(() => {
@@ -129,24 +275,88 @@ export default function CreatePage() {
 
     const upload = async () => {
       try {
-        const formData = new FormData();
-        Array.from(files).forEach((file) => formData.append('files', file));
-        if (selectedProjectId) {
-          formData.append('projectId', selectedProjectId);
-        }
-        const response = await fetch('/api/audio/upload', {
-          method: 'POST',
-          body: formData,
-        });
+        const filesArray = Array.from(files);
+        let browserAnalysisHints: Awaited<
+          ReturnType<typeof collectBrowserAnalysisHintsForUpload>
+        > = [];
 
-        if (!response.ok) {
-          const error = await response.json().catch(() => null);
-          throw new Error(error?.error || 'Upload failed');
+        if (audioFeatureFlags.browserAnalysisWorker) {
+          setPreAnalysisMessage('Running browser pre-analysis...');
+          browserAnalysisHints = await collectBrowserAnalysisHintsForUpload(
+            filesArray,
+            {
+              enabled: true,
+              mlSectionTagging: audioFeatureFlags.mlSectionTagging,
+            }
+          );
+          if (browserAnalysisHints.length > 0) {
+            setPreAnalysisMessage(
+              `Browser pre-analysis complete for ${browserAnalysisHints.length}/${filesArray.length} file(s). Uploading...`
+            );
+          } else {
+            setPreAnalysisMessage('Browser pre-analysis unavailable. Uploading and using server analysis...');
+          }
+        } else {
+          setPreAnalysisMessage('Uploading and using server analysis...');
         }
 
-        await loadTracks();
+        // Try resumable upload first if flag is enabled
+        let usedResumableUpload = false;
+        if (audioFeatureFlags.resumableUploads) {
+          try {
+            for (const file of filesArray) {
+              const metadata = buildTusMetadata(
+                file.name,
+                file.type || 'audio/mpeg',
+                'current-user', // Will be resolved server-side from session
+                selectedProjectId ?? undefined
+              );
+              
+              await startResumableUpload({
+                file,
+                endpoint: '/api/audio/upload/tus',
+                metadata,
+                onProgress: (bytesUploaded, bytesTotal) => {
+                  const pct = Math.round((bytesUploaded / bytesTotal) * 100);
+                  setPreAnalysisMessage(`Uploading ${file.name}... ${pct}%`);
+                },
+              });
+            }
+            usedResumableUpload = true;
+            await loadTracks();
+            setPreAnalysisMessage(null);
+          } catch {
+            // Fall through to standard upload
+            console.warn('Resumable upload failed, falling back to standard upload');
+          }
+        }
+
+        // Standard upload fallback
+        if (!usedResumableUpload) {
+          const formData = new FormData();
+          filesArray.forEach((file) => formData.append('files', file));
+          if (browserAnalysisHints.length > 0) {
+            formData.append('browserAnalysisHints', JSON.stringify(browserAnalysisHints));
+          }
+          if (selectedProjectId) {
+            formData.append('projectId', selectedProjectId);
+          }
+          const response = await fetch('/api/audio/upload', {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (!response.ok) {
+            const error = await response.json().catch(() => null);
+            throw new Error(error?.error || 'Upload failed');
+          }
+
+          await loadTracks();
+          setPreAnalysisMessage(null);
+        }
       } catch (error) {
         console.error(error);
+        setPreAnalysisMessage(null);
         alert(error instanceof Error ? error.message : 'Upload failed');
       } finally {
         setIsUploading(false);
@@ -298,6 +508,7 @@ export default function CreatePage() {
           preferStems,
           keepOrder,
           eventType,
+          stylePackId: selectedStylePackId ?? undefined,
           projectId: selectedProjectId,
         }),
       });
@@ -365,6 +576,29 @@ export default function CreatePage() {
   };
 
   const completedTracks = useMemo(() => uploadedTracks.filter((t) => t.analysis_status === 'completed'), [uploadedTracks]);
+  useEffect(() => {
+    const selectedCompleted = selectedTrackIds.filter((id) =>
+      completedTracks.some((track) => track.id === id)
+    );
+    setBrowserPreviewTrackAId((current) => {
+      if (current && selectedCompleted.includes(current)) return current;
+      return selectedCompleted[0] ?? null;
+    });
+    setBrowserPreviewTrackBId((current) => {
+      if (current && selectedCompleted.includes(current) && current !== (selectedCompleted[0] ?? null)) {
+        return current;
+      }
+      return selectedCompleted.find((id) => id !== (selectedCompleted[0] ?? null)) ?? null;
+    });
+  }, [completedTracks, selectedTrackIds]);
+
+  const browserPreviewTracks = useMemo(() => {
+    const resolveTrack = (id: string | null) =>
+      id ? completedTracks.find((track) => track.id === id) ?? null : null;
+    return [resolveTrack(browserPreviewTrackAId), resolveTrack(browserPreviewTrackBId)].filter(
+      (track): track is Track => Boolean(track)
+    );
+  }, [browserPreviewTrackAId, browserPreviewTrackBId, completedTracks]);
 
   // Tracks with stems available for stem mashup mode
   const stemTracks = useMemo(() => completedTracks.filter((t) => t.has_stems), [completedTracks]);
@@ -399,10 +633,26 @@ export default function CreatePage() {
     return completedTracks
       .filter((t) => t.id !== anchorTrack.id)
       .map((t) => {
-        const { score, bpmDiff, keyOk } = overallCompatibility(anchorTrack.bpm, anchorTrack.camelot_key ?? anchorTrack.musical_key, {
-          bpm: t.bpm,
-          camelotKey: t.camelot_key ?? t.musical_key,
-        });
+        const { score, bpmDiff, keyOk } = overallCompatibility(
+          anchorTrack.bpm,
+          anchorTrack.camelot_key ?? anchorTrack.musical_key,
+          {
+            bpm: t.bpm,
+            camelotKey: t.camelot_key ?? t.musical_key,
+            beatGrid: t.beat_grid,
+            waveformLite: t.waveform_lite,
+            bpmConfidence: t.bpm_confidence ?? null,
+            keyConfidence: t.key_confidence ?? null,
+            analysisFeatures: t.analysis_features ?? null,
+          },
+          {
+            beatGrid: anchorTrack.beat_grid,
+            waveformLite: anchorTrack.waveform_lite,
+            bpmConfidence: anchorTrack.bpm_confidence ?? null,
+            keyConfidence: anchorTrack.key_confidence ?? null,
+            analysisFeatures: anchorTrack.analysis_features ?? null,
+          }
+        );
         return {
           id: t.id,
           name: t.original_filename,
@@ -414,6 +664,71 @@ export default function CreatePage() {
       .sort((a, b) => b.score - a.score)
       .slice(0, 4);
   }, [anchorTrack, completedTracks]);
+
+  useEffect(() => {
+    if (!isBrowserPreviewing) return;
+    stopBrowserPreviewPlayback();
+  }, [isBrowserPreviewing, selectedTrackIds, stopBrowserPreviewPlayback]);
+
+  const handleBrowserTransitionPreview = async () => {
+    if (!browserPreviewTrackAId || !browserPreviewTrackBId || browserPreviewTrackAId === browserPreviewTrackBId) {
+      setBrowserPreviewMessage('Pick two different analyzed tracks for browser FX preview.');
+      return;
+    }
+
+    if (browserPreviewTracks.length < 2) {
+      setBrowserPreviewMessage('Select at least 2 analyzed tracks for browser FX preview.');
+      return;
+    }
+
+    const [trackA, trackB] = browserPreviewTracks;
+    setPreviewUrl(null);
+    setBrowserPreviewMessage(null);
+
+    try {
+      const graph = await ensureBrowserPreviewGraph();
+      if (!graph.capabilities.available) {
+        recordPreviewQaTelemetry('capability_unavailable', graph.capabilities.reason);
+        setBrowserPreviewMessage(
+          `Browser FX preview unavailable${graph.capabilities.reason ? `: ${graph.capabilities.reason}` : ''}.`
+        );
+        return;
+      }
+
+      stopBrowserPreviewPlayback();
+      setIsBrowserPreviewing(true);
+
+      await graph.loadPlayers({
+        vocalUrl: `/api/audio/stream/track/${trackA.id}`,
+        instrumentalUrl: `/api/audio/stream/track/${trackB.id}`,
+      });
+      graph.setMix({ vocalGain: 1, instrumentalGain: 1, wetFx: 0.22 });
+
+      const style = (crossfadeEnabled ? crossfadeStyle : autoDjTransitionStyle) as PreviewTransitionStyle;
+      const durationSeconds = Math.max(1, Math.min(12, crossfadeEnabled ? crossfadeDuration : 4));
+      const plan = buildTransitionAutomationPlan(style, durationSeconds);
+      await graph.playTransitionPreview(plan);
+      recordPreviewQaTelemetry('preview_started', `style:${style}`);
+
+      setBrowserPreviewMessage(
+        `Browser FX preview: ${trackA.original_filename} -> ${trackB.original_filename} (${style}, ${plan.durationSeconds.toFixed(1)}s)`
+      );
+
+      clearBrowserPreviewTimer();
+      browserPreviewTimerRef.current = setTimeout(() => {
+        setIsBrowserPreviewing(false);
+      }, Math.ceil((plan.durationSeconds + 2) * 1000));
+    } catch (error) {
+      setIsBrowserPreviewing(false);
+      setBrowserPreviewMessage(error instanceof Error ? error.message : 'Failed to run browser FX preview');
+      recordPreviewQaTelemetry('preview_failed', error instanceof Error ? error.message : 'unknown');
+      emitAudioPipelineTelemetry('preview_graph.create_page_preview_failed', {
+        area: 'preview',
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Unknown browser FX preview error',
+      });
+    }
+  };
 
   if (!isAuthenticated) {
     return (
@@ -447,6 +762,13 @@ export default function CreatePage() {
               <Link href="/profile">
                 <Button variant="ghost" className="text-gray-400 hover:text-white hover:bg-white/5">Profile</Button>
               </Link>
+              {isAdminUser && (
+                <Link href="/admin/audio-observability">
+                  <Button variant="ghost" className="text-amber-300 hover:text-amber-200 hover:bg-amber-500/10">
+                    Admin
+                  </Button>
+                </Link>
+              )}
               <Link href="/login">
                 <Button variant="outline" className="border-white/10 hover:bg-white/5 hover:text-white">Sign Out</Button>
               </Link>
@@ -503,6 +825,9 @@ export default function CreatePage() {
             
             {isLoadingTracks && (
               <p className="text-sm text-gray-500">Refreshing tracks...</p>
+            )}
+            {isUploading && preAnalysisMessage && (
+              <p className="text-sm text-gray-400">{preAnalysisMessage}</p>
             )}
           </motion.div>
 
@@ -602,7 +927,17 @@ export default function CreatePage() {
                           <option value="">Select track for vocals...</option>
                           {stemTracks.map((track) => (
                             <option key={track.id} value={track.id}>
-                              {track.original_filename} {track.camelot_key && `(${track.camelot_key})`}
+                              {track.original_filename}
+                              {track.camelot_key ? ` (${track.camelot_key})` : ''}
+                              {track.analysis_quality === 'browser_hint'
+                                ? ` [browser${
+                                    track.browser_analysis_confidence != null
+                                      ? ` ${Math.round(track.browser_analysis_confidence * 100)}%`
+                                      : ''
+                                  }]`
+                                : track.analysis_quality
+                                  ? ' [server]'
+                                  : ''}
                             </option>
                           ))}
                         </select>
@@ -624,7 +959,17 @@ export default function CreatePage() {
                           <option value="">Select track for instrumental...</option>
                           {stemTracks.map((track) => (
                             <option key={track.id} value={track.id}>
-                              {track.original_filename} {track.camelot_key && `(${track.camelot_key})`}
+                              {track.original_filename}
+                              {track.camelot_key ? ` (${track.camelot_key})` : ''}
+                              {track.analysis_quality === 'browser_hint'
+                                ? ` [browser${
+                                    track.browser_analysis_confidence != null
+                                      ? ` ${Math.round(track.browser_analysis_confidence * 100)}%`
+                                      : ''
+                                  }]`
+                                : track.analysis_quality
+                                  ? ' [server]'
+                                  : ''}
                             </option>
                           ))}
                         </select>
@@ -720,7 +1065,7 @@ export default function CreatePage() {
                                    const styleId = e.target.value as TransitionStyle;
                                    const selectedStyle = transitionStyles.find(s => s.id === styleId);
                                    setCrossfadeStyle(styleId);
-                                   if (selectedStyle) {
+                                   if (selectedStyle?.duration != null) {
                                      setCrossfadeDuration(selectedStyle.duration);
                                    }
                                  }}
@@ -772,6 +1117,34 @@ export default function CreatePage() {
                   </div>
 
                   <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="flex flex-col gap-1 sm:col-span-2">
+                      <label className="text-xs text-gray-400">Style pack (Phase 3)</label>
+                      <select
+                        value={selectedStylePackId ?? ''}
+                        onChange={(e) => {
+                          const nextId = e.target.value || null;
+                          setSelectedStylePackId(nextId);
+                          const selectedPack = stylePacks.find((pack) => pack.id === nextId);
+                          if (selectedPack) {
+                            setAutoDjEnergyMode(selectedPack.energyProfile);
+                            setAutoDjTransitionStyle(selectedPack.defaultTransitionStyle);
+                          }
+                        }}
+                        className="w-full p-3 rounded-lg bg-black/30 border border-white/10 text-white text-sm focus:border-primary outline-none"
+                      >
+                        <option value="">Manual controls (no style pack)</option>
+                        {stylePacks.map((pack) => (
+                          <option key={pack.id} value={pack.id}>
+                            {pack.name} ({pack.energyProfile}, {pack.defaultTransitionStyle})
+                          </option>
+                        ))}
+                      </select>
+                      {selectedStylePackId && (
+                        <p className="text-xs text-gray-500">
+                          {stylePacks.find((pack) => pack.id === selectedStylePackId)?.description ?? 'Built-in style preset'}
+                        </p>
+                      )}
+                    </div>
                     <div className="flex flex-col gap-1">
                       <label className="text-xs text-gray-400">Event type</label>
                       <select
@@ -887,6 +1260,87 @@ export default function CreatePage() {
                     {isSmartMixing ? 'Selecting…' : 'Smart mix'}
                   </Button>
                 </div>
+                {audioFeatureFlags.toneJsPreviewGraph && (
+                  <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs text-primary/90">Browser transition FX preview (Tone.js)</p>
+                        <p className="text-[11px] text-gray-400">
+                          Uses the first two selected tracks via browser audio graph. Final render remains server-side.
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-3 text-xs border border-primary/20 hover:border-primary/40"
+                        onClick={isBrowserPreviewing ? stopBrowserPreviewPlayback : handleBrowserTransitionPreview}
+                        disabled={browserPreviewTracks.length < 2 && !isBrowserPreviewing}
+                      >
+                        {isBrowserPreviewing ? 'Stop FX' : 'Preview FX'}
+                      </Button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-400">
+                      <span>
+                        Source pair:{' '}
+                        {browserPreviewTracks.length >= 2
+                          ? `${browserPreviewTracks[0].original_filename} -> ${browserPreviewTracks[1].original_filename}`
+                          : 'Select 2 analyzed tracks'}
+                      </span>
+                      <span className="text-gray-500">•</span>
+                      <span>
+                        Style: {crossfadeEnabled ? crossfadeStyle : autoDjTransitionStyle}
+                      </span>
+                      <span className="text-gray-500">•</span>
+                      <span>
+                        Duration: {Math.max(1, Math.min(12, crossfadeEnabled ? crossfadeDuration : 4))}s
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <label className="flex flex-col gap-1 text-[11px] text-gray-400">
+                        <span>Track A (outgoing)</span>
+                        <select
+                          value={browserPreviewTrackAId ?? ''}
+                          onChange={(e) => setBrowserPreviewTrackAId(e.target.value || null)}
+                          className="h-9 rounded border border-white/10 bg-black/30 px-2 text-xs text-white"
+                        >
+                          <option value="">Select track A</option>
+                          {completedTracks
+                            .filter((track) => selectedTrackIds.includes(track.id))
+                            .map((track) => (
+                              <option key={track.id} value={track.id}>
+                                {track.original_filename}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1 text-[11px] text-gray-400">
+                        <span>Track B (incoming)</span>
+                        <select
+                          value={browserPreviewTrackBId ?? ''}
+                          onChange={(e) => setBrowserPreviewTrackBId(e.target.value || null)}
+                          className="h-9 rounded border border-white/10 bg-black/30 px-2 text-xs text-white"
+                        >
+                          <option value="">Select track B</option>
+                          {completedTracks
+                            .filter((track) => selectedTrackIds.includes(track.id) && track.id !== browserPreviewTrackAId)
+                            .map((track) => (
+                              <option key={track.id} value={track.id}>
+                                {track.original_filename}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                    </div>
+                    {browserPreviewCapabilities && !browserPreviewCapabilities.available && (
+                      <p className="text-[11px] text-amber-300/90">
+                        Fallback active: {browserPreviewCapabilities.reason ?? 'Web Audio unavailable'}.
+                      </p>
+                    )}
+                    {browserPreviewMessage && (
+                      <p className="text-[11px] text-gray-300">{browserPreviewMessage}</p>
+                    )}
+                  </div>
+                )}
                 {previewUrl && (
                   <div className="rounded-lg border border-white/5 bg-black/30 p-3">
                     <p className="text-xs text-gray-400 mb-2">Preview (temporary)</p>
@@ -942,7 +1396,19 @@ export default function CreatePage() {
                     <label key={track.id} className="flex items-center justify-between p-3 rounded-lg bg-black/20 border border-white/5 hover:border-primary/30 transition-colors cursor-pointer">
                       <div>
                         <p className="text-sm text-white">{track.original_filename}</p>
-                        <p className="text-xs text-gray-500">{track.bpm ? `${track.bpm} BPM` : 'BPM TBD'} {track.musical_key ? `• ${track.musical_key}` : ''}</p>
+                        <p className="text-xs text-gray-500">
+                          {track.bpm ? `${track.bpm} BPM` : 'BPM TBD'}
+                          {track.musical_key ? ` • ${track.musical_key}` : ''}
+                          {track.analysis_quality === 'browser_hint'
+                            ? ` • browser${
+                                track.browser_analysis_confidence != null
+                                  ? ` ${Math.round(track.browser_analysis_confidence * 100)}%`
+                                  : ''
+                              }`
+                            : track.analysis_quality
+                              ? ' • server'
+                              : ''}
+                        </p>
                       </div>
                       <input
                         type="checkbox"
@@ -1073,6 +1539,38 @@ export default function CreatePage() {
         </div>
 
         {/* Track List using reusable component */}
+        <div className="mt-8 mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-xs uppercase tracking-wide text-gray-500">Track Source</span>
+            <div className="flex rounded-lg border border-white/10 bg-black/20 p-1">
+              {([
+                ['all', 'All'],
+                ['browser_hint', 'Browser'],
+                ['standard', 'Server'],
+              ] as const).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setTrackAnalysisFilter(value)}
+                  className={`rounded-md px-3 py-1 text-xs transition-colors ${
+                    trackAnalysisFilter === value
+                      ? 'bg-primary/20 text-primary border border-primary/30'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="text-xs text-gray-400">
+            Browser: {trackQualityCounts.browser_hint ?? 0}
+            {' • '}
+            Server: {trackQualityCounts.standard ?? 0}
+            {' • '}
+            Total shown: {uploadedTracks.length}
+          </div>
+        </div>
         <TrackList 
             tracks={uploadedTracks} 
             onRemoveTrack={handleRemoveTrack}

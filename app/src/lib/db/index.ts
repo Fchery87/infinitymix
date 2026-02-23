@@ -36,3 +36,25 @@ const migrationClient = postgres(connectionString, { max: 1, prepare: false, ssl
 export const migrationDb = drizzlePostgres(migrationClient, { schema });
 
 export { schema };
+
+// Helper functions for common track operations
+import { eq } from 'drizzle-orm';
+import { uploadedTracks } from './schema';
+
+export async function getTrack(trackId: string) {
+  const [track] = await db
+    .select()
+    .from(uploadedTracks)
+    .where(eq(uploadedTracks.id, trackId))
+    .limit(1);
+  return track ?? null;
+}
+
+export async function updateTrack(trackId: string, data: Partial<typeof uploadedTracks.$inferInsert>) {
+  const [updated] = await db
+    .update(uploadedTracks)
+    .set(data)
+    .where(eq(uploadedTracks.id, trackId))
+    .returning();
+  return updated ?? null;
+}

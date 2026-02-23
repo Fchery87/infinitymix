@@ -3,6 +3,7 @@ import { uploadedTracks } from '@/lib/db/schema';
 import { getStorage } from '@/lib/storage';
 import { ValidationError } from '@/lib/utils/error-handling';
 import { enqueueAnalysis } from '@/lib/queue';
+import type { BrowserAnalysisHint } from '@/lib/audio/types/analysis';
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 const ALLOWED_TYPES = ['audio/mpeg', 'audio/wav', 'audio/mp3', 'audio/wave'];
@@ -16,6 +17,9 @@ export type UploadedTrackResponse = {
   camelot_key: string | null;
   bpm_confidence: number | null;
   key_confidence: number | null;
+  browser_analysis_confidence: number | null;
+  browser_hint_decision_reason: string | null;
+  analysis_features: typeof uploadedTracks.$inferSelect['analysisFeatures'] | null;
   beat_grid: number[];
   phrases: Array<{ start: number; end: number; energy: number }>;
   structure: Array<{
@@ -26,6 +30,7 @@ export type UploadedTrackResponse = {
   }>;
   drop_moments: number[];
   waveform_lite: number[];
+  analysis_quality: string | null;
   analysis_version: string | null;
   duration_seconds: number | null;
   has_stems: boolean;
@@ -37,7 +42,8 @@ export type UploadedTrackResponse = {
 export async function processSingleUpload(
   userId: string,
   file: File,
-  projectId?: string | null
+  projectId?: string | null,
+  browserAnalysisHint?: BrowserAnalysisHint | null
 ): Promise<UploadedTrackResponse> {
   if (!ALLOWED_TYPES.includes(file.type)) {
     throw new ValidationError(`Unsupported file type: ${file.type}`);
@@ -78,9 +84,28 @@ export async function processSingleUpload(
     storageUrl,
     mimeType: file.type,
     fileName: file.name,
+    browserAnalysisHint: browserAnalysisHint ?? undefined,
   });
 
   return formatTrackResponse(track);
+}
+
+export function parseBrowserAnalysisHintsInput(raw: FormDataEntryValue | null): BrowserAnalysisHint[] {
+  if (!raw || typeof raw !== 'string') return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is BrowserAnalysisHint => {
+      return Boolean(
+        item &&
+          typeof item === 'object' &&
+          typeof (item as BrowserAnalysisHint).fileName === 'string' &&
+          typeof (item as BrowserAnalysisHint).fileSizeBytes === 'number'
+      );
+    });
+  } catch {
+    return [];
+  }
 }
 
 export function formatTrackResponse(
@@ -95,11 +120,17 @@ export function formatTrackResponse(
     camelot_key: track.camelotKey ?? null,
     bpm_confidence: track.bpmConfidence ? Number(track.bpmConfidence) : null,
     key_confidence: track.keyConfidence ? Number(track.keyConfidence) : null,
+    browser_analysis_confidence: track.browserAnalysisConfidence
+      ? Number(track.browserAnalysisConfidence)
+      : null,
+    browser_hint_decision_reason: track.browserHintDecisionReason ?? null,
+    analysis_features: track.analysisFeatures ?? null,
     beat_grid: track.beatGrid ?? [],
     phrases: track.phrases ?? [],
     structure: track.structure ?? [],
     drop_moments: track.dropMoments ?? [],
     waveform_lite: track.waveformLite ?? [],
+    analysis_quality: track.analysisQuality ?? null,
     analysis_version: track.analysisVersion ?? null,
     duration_seconds: track.durationSeconds
       ? Number(track.durationSeconds)

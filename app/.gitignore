@@ -23,6 +23,9 @@
 # misc
 .DS_Store
 *.pem
+*.sql
+!db/manual-migrations/
+!db/manual-migrations/*.sql
 
 # debug
 npm-debug.log*

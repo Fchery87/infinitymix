@@ -5,6 +5,7 @@ import { config } from './utils/config'
 import * as fs from 'fs'
 import * as path from 'path'
 import { promisify } from 'util'
+import { normalizeLoudness } from './loudnorm'
 
 interface TimelineSegment {
   trackId: string
@@ -83,8 +84,20 @@ export class AudioRenderer {
       // Apply audio transformations and mix
       const outputPath = await this.renderAndMix(timelinePlan, trackFiles, tempDir)
       
+      // Normalize loudness
+      const loudnormOutputPath = outputPath.replace('.wav', '_normalized.wav')
+      const qaMetrics = await normalizeLoudness(outputPath, loudnormOutputPath)
+
+      logger.info('Loudness normalization completed', {
+        mashupId,
+        integratedLoudness: qaMetrics.integratedLoudness,
+        truePeak: qaMetrics.truePeak,
+        loudnessRange: qaMetrics.loudnessRange,
+        clippingDetected: qaMetrics.clippingDetected,
+      })
+      
       // Convert to MP3
-      const mp3Path = await this.convertToMp3(outputPath, tempDir)
+      const mp3Path = await this.convertToMp3(loudnormOutputPath, tempDir)
       
       // Upload final mashup to S3
       const storageUrl = await this.uploadMashup(mashupId, mp3Path)

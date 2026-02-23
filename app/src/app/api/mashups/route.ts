@@ -4,8 +4,11 @@ import { db } from '@/lib/db';
 import { mashups } from '@/lib/db/schema';
 import { log } from '@/lib/logger';
 import { eq, desc, count } from 'drizzle-orm';
+import { withRateLimit, generalApiRateLimit } from '@/lib/utils/rate-limiting';
 
-export async function GET(request: NextRequest) {
+const withGeneralRateLimit = withRateLimit(generalApiRateLimit);
+
+async function handleGet(request: NextRequest) {
   try {
     const user = await getSessionUser(request);
     if (!user) {
@@ -87,3 +90,5 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
+export const GET = withGeneralRateLimit(handleGet);

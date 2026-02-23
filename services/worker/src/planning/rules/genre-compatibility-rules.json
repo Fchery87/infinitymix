@@ -1,0 +1,64 @@
+{
+  "id": "genre-compatibility-rules",
+  "version": "1.0.0",
+  "rules": [
+    {
+      "id": "genre.same_genre_smooth",
+      "description": "Same genre with compatible key and low BPM delta gets smooth transition",
+      "when": [
+        { "fact": "genreMatch", "op": "eq", "value": true },
+        { "fact": "keyCompatible", "op": "eq", "value": true },
+        { "fact": "bpmDelta", "op": "lt", "value": 10 }
+      ],
+      "actions": [
+        { "type": "set", "field": "genrePenalty", "value": 0 },
+        { "type": "set", "field": "preferredTransition", "value": "smooth" }
+      ]
+    },
+    {
+      "id": "genre.key_incompatible_energy",
+      "description": "Incompatible keys suggest energy transition with penalty",
+      "when": [
+        { "fact": "keyCompatible", "op": "eq", "value": false }
+      ],
+      "actions": [
+        { "type": "set", "field": "preferredTransition", "value": "energy" },
+        { "type": "set", "field": "genrePenalty", "value": 0.15 }
+      ]
+    },
+    {
+      "id": "genre.large_bpm_delta",
+      "description": "Large BPM delta incurs significant penalty",
+      "when": [
+        { "fact": "bpmDelta", "op": "gte", "value": 15 }
+      ],
+      "actions": [
+        { "type": "set", "field": "genrePenalty", "value": 0.3 }
+      ]
+    },
+    {
+      "id": "genre.moderate_bpm_delta",
+      "description": "Moderate BPM delta incurs small penalty",
+      "when": [
+        { "fact": "bpmDelta", "op": "gte", "value": 8 },
+        { "fact": "bpmDelta", "op": "lt", "value": 15 }
+      ],
+      "actions": [
+        { "type": "set", "field": "genrePenalty", "value": 0.1 }
+      ]
+    },
+    {
+      "id": "genre.cross_genre_filter_sweep",
+      "description": "Cross-genre with compatible key and reasonable BPM uses filter sweep",
+      "when": [
+        { "fact": "genreMatch", "op": "eq", "value": false },
+        { "fact": "keyCompatible", "op": "eq", "value": true },
+        { "fact": "bpmDelta", "op": "lt", "value": 15 }
+      ],
+      "actions": [
+        { "type": "set", "field": "preferredTransition", "value": "filter_sweep" },
+        { "type": "set", "field": "genrePenalty", "value": 0.05 }
+      ]
+    }
+  ]
+}

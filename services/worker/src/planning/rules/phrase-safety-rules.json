@@ -1,0 +1,52 @@
+{
+  "id": "phrase-safety-rules",
+  "version": "1.0.0",
+  "rules": [
+    {
+      "id": "phrase.mid_phrase_penalty",
+      "description": "Mid-phrase transitions are unsafe and receive a penalty",
+      "when": [
+        { "fact": "transitionAtPhraseEdge", "op": "eq", "value": false },
+        { "fact": "phraseConfidence", "op": "gte", "value": 0.5 }
+      ],
+      "actions": [
+        { "type": "set", "field": "phraseSafe", "value": false },
+        { "type": "set", "field": "transitionPenalty", "value": 0.3 }
+      ]
+    },
+    {
+      "id": "phrase.low_confidence_skip",
+      "description": "Low confidence phrase detection skips penalty and allows transition",
+      "when": [
+        { "fact": "phraseConfidence", "op": "lt", "value": 0.5 }
+      ],
+      "actions": [
+        { "type": "set", "field": "phraseSafe", "value": true },
+        { "type": "set", "field": "transitionPenalty", "value": 0 }
+      ]
+    },
+    {
+      "id": "phrase.short_transition_penalty",
+      "description": "Very short transitions receive a penalty regardless of phrase position",
+      "when": [
+        { "fact": "transitionDuration", "op": "lt", "value": 1 }
+      ],
+      "actions": [
+        { "type": "set", "field": "transitionPenalty", "value": 0.2 }
+      ]
+    },
+    {
+      "id": "phrase.phrase_edge_safe",
+      "description": "Phrase-edge transitions with good confidence and duration are safe",
+      "when": [
+        { "fact": "transitionAtPhraseEdge", "op": "eq", "value": true },
+        { "fact": "phraseConfidence", "op": "gte", "value": 0.5 },
+        { "fact": "transitionDuration", "op": "gte", "value": 1 }
+      ],
+      "actions": [
+        { "type": "set", "field": "phraseSafe", "value": true },
+        { "type": "set", "field": "transitionPenalty", "value": 0 }
+      ]
+    }
+  ]
+}

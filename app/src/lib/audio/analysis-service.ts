@@ -9,6 +9,8 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegStatic from 'ffmpeg-static';
 import { Readable } from 'node:stream';
 import { YIN } from 'pitchfinder';
+import type { BrowserAnalysisHint } from '@/lib/audio/types/analysis';
+import { getAudioPipelineFeatureFlags } from '@/lib/audio/feature-flags';
 
 const TARGET_SAMPLE_RATE = 44100;
 const ANALYSIS_VERSION = 'phase2-v1';
@@ -54,6 +56,20 @@ function correlate(hist: number[], profile: number[]) {
 
 function mapCamelot(noteIndex: number, mode: 'major' | 'minor') {
   return mode === 'major' ? camelotMajor[noteIndex] : camelotMinor[noteIndex];
+}
+
+function camelotFromKeySignature(keySignature: string | null): string | null {
+  if (!keySignature) return null;
+  const mode = keySignature.endsWith('min')
+    ? 'minor'
+    : keySignature.endsWith('maj')
+      ? 'major'
+      : null;
+  if (!mode) return null;
+  const note = keySignature.replace(/(maj|min)$/, '');
+  const noteIndex = NOTE_NAMES.indexOf(note);
+  if (noteIndex < 0) return null;
+  return mapCamelot(noteIndex, mode);
 }
 
 function computeEnergyEnvelope(samples: Float32Array, sampleRate: number) {
@@ -372,14 +388,164 @@ type AnalysisParams = {
   storageUrl?: string;
   mimeType: string;
   fileName: string;
+  browserAnalysisHint?: BrowserAnalysisHint;
 };
 
-export async function startTrackAnalysis({ trackId, buffer, storageUrl, mimeType, fileName }: AnalysisParams) {
+type BrowserHintDecisionReason =
+  | 'accepted'
+  | 'feature_disabled'
+  | 'no_browser_hint'
+  | 'invalid_browser_hint'
+  | 'low_overall_confidence'
+  | 'missing_bpm'
+  | 'low_bpm_confidence'
+  | 'missing_key'
+  | 'low_key_confidence'
+  | 'analysis_failed';
+
+const BROWSER_HINT_CONFIDENCE_THRESHOLD = 0.7;
+const BROWSER_HINT_TEMPO_CONFIDENCE_THRESHOLD = 0.65;
+const BROWSER_HINT_KEY_CONFIDENCE_THRESHOLD = 0.5;
+
+function isBrowserAnalysisHint(value: unknown): value is BrowserAnalysisHint {
+  if (!value || typeof value !== 'object') return false;
+  const hint = value as Partial<BrowserAnalysisHint>;
+  return (
+    hint.source === 'browser-worker' &&
+    typeof hint.fileName === 'string' &&
+    typeof hint.fileSizeBytes === 'number' &&
+    typeof hint.confidence === 'object' &&
+    hint.confidence !== null &&
+    typeof hint.confidence.overall === 'number'
+  );
+}
+
+function shouldUseBrowserHint(hint: BrowserAnalysisHint | undefined) {
+  if (!hint) return false;
+  if (hint.source !== 'browser-worker') return false;
+  if ((hint.confidence.overall ?? 0) < BROWSER_HINT_CONFIDENCE_THRESHOLD) return false;
+  if (hint.bpm == null || (hint.bpmConfidence ?? 0) < BROWSER_HINT_TEMPO_CONFIDENCE_THRESHOLD) return false;
+  if (!hint.keySignature || (hint.keyConfidence ?? 0) < BROWSER_HINT_KEY_CONFIDENCE_THRESHOLD) return false;
+  return true;
+}
+
+function getBrowserHintDecisionReason(
+  browserAnalysisHint: unknown,
+  browserAnalysisWorkerEnabled: boolean
+): BrowserHintDecisionReason {
+  if (!browserAnalysisWorkerEnabled) {
+    return browserAnalysisHint == null ? 'feature_disabled' : 'feature_disabled';
+  }
+  if (browserAnalysisHint == null) return 'no_browser_hint';
+  if (!isBrowserAnalysisHint(browserAnalysisHint)) return 'invalid_browser_hint';
+  const hint = browserAnalysisHint;
+  if ((hint.confidence.overall ?? 0) < BROWSER_HINT_CONFIDENCE_THRESHOLD) {
+    return 'low_overall_confidence';
+  }
+  if (hint.bpm == null) return 'missing_bpm';
+  if ((hint.bpmConfidence ?? 0) < BROWSER_HINT_TEMPO_CONFIDENCE_THRESHOLD) {
+    return 'low_bpm_confidence';
+  }
+  if (!hint.keySignature) return 'missing_key';
+  if ((hint.keyConfidence ?? 0) < BROWSER_HINT_KEY_CONFIDENCE_THRESHOLD) {
+    return 'low_key_confidence';
+  }
+  return 'accepted';
+}
+
+function resolveAcceptedBrowserHint(
+  browserAnalysisHint: unknown,
+  browserAnalysisWorkerEnabled: boolean
+) {
+  if (!browserAnalysisWorkerEnabled) return null;
+  if (!isBrowserAnalysisHint(browserAnalysisHint)) return null;
+  return shouldUseBrowserHint(browserAnalysisHint) ? browserAnalysisHint : null;
+}
+
+function buildDbUpdateFromBrowserHint(hint: BrowserAnalysisHint) {
+  return {
+    analysisStatus: 'completed' as const,
+    bpm: hint.bpm != null ? hint.bpm.toString() : null,
+    bpmConfidence: hint.bpmConfidence != null ? hint.bpmConfidence.toString() : null,
+    keySignature: hint.keySignature,
+    camelotKey: camelotFromKeySignature(hint.keySignature),
+    keyConfidence: hint.keyConfidence != null ? hint.keyConfidence.toString() : null,
+    browserAnalysisConfidence:
+      hint.confidence?.overall != null ? hint.confidence.overall.toString() : null,
+    browserHintDecisionReason: 'accepted' as BrowserHintDecisionReason,
+    analysisFeatures: hint.analysisFeatures ?? null,
+    durationSeconds: hint.durationSeconds != null ? hint.durationSeconds.toString() : null,
+    hasStems: false,
+    beatGrid: hint.beatGrid ?? [],
+    phrases: hint.phrases ?? [],
+    structure: hint.structure ?? [],
+    dropMoments: hint.dropMoments ?? [],
+    waveformLite: hint.waveformLite ?? [],
+    analysisQuality: 'browser_hint',
+    analysisVersion: 'browser-v1',
+    updatedAt: new Date(),
+  };
+}
+
+export async function startTrackAnalysis({
+  trackId,
+  buffer,
+  storageUrl,
+  mimeType,
+  fileName,
+  browserAnalysisHint,
+}: AnalysisParams) {
   try {
     await db
       .update(uploadedTracks)
       .set({ analysisStatus: 'analyzing', updatedAt: new Date() })
       .where(eq(uploadedTracks.id, trackId));
+
+    const flags = getAudioPipelineFeatureFlags();
+    const validBrowserHint = isBrowserAnalysisHint(browserAnalysisHint)
+      ? browserAnalysisHint
+      : undefined;
+    const browserHintDecisionReason = getBrowserHintDecisionReason(
+      browserAnalysisHint,
+      flags.browserAnalysisWorker
+    );
+    const acceptedBrowserHint = resolveAcceptedBrowserHint(
+      browserAnalysisHint,
+      flags.browserAnalysisWorker
+    );
+
+    if (acceptedBrowserHint) {
+      log('info', 'audio.analysis.browser_hint.accepted', {
+        trackId,
+        fileName,
+        overallConfidence: acceptedBrowserHint.confidence.overall,
+        bpmConfidence: acceptedBrowserHint.bpmConfidence,
+        keyConfidence: acceptedBrowserHint.keyConfidence,
+      });
+
+      await db
+        .update(uploadedTracks)
+        .set(buildDbUpdateFromBrowserHint(acceptedBrowserHint))
+        .where(eq(uploadedTracks.id, trackId));
+      return;
+    }
+
+    if (validBrowserHint) {
+      log('info', 'audio.analysis.browser_hint.fallback', {
+        trackId,
+        fileName,
+        reason: browserHintDecisionReason,
+        overallConfidence: validBrowserHint.confidence.overall,
+        bpmConfidence: validBrowserHint.bpmConfidence,
+        keyConfidence: validBrowserHint.keyConfidence,
+      });
+    } else {
+      log('info', 'audio.analysis.browser_hint.fallback', {
+        trackId,
+        fileName,
+        reason: browserHintDecisionReason,
+      });
+    }
 
     let audioBuffer = buffer;
     if (!audioBuffer && storageUrl) {
@@ -403,6 +569,9 @@ export async function startTrackAnalysis({ trackId, buffer, storageUrl, mimeType
         keySignature: result.keySignature,
         camelotKey: result.camelotKey,
         keyConfidence: result.keyConfidence !== null ? result.keyConfidence.toString() : null,
+        browserAnalysisConfidence: null,
+        browserHintDecisionReason: browserHintDecisionReason,
+        analysisFeatures: null,
         durationSeconds: result.durationSeconds !== null ? result.durationSeconds.toString() : null,
         hasStems: result.hasStems,
         beatGrid: result.beatGrid,
@@ -419,7 +588,24 @@ export async function startTrackAnalysis({ trackId, buffer, storageUrl, mimeType
     handleAsyncError(error as Error, 'startTrackAnalysis');
     await db
       .update(uploadedTracks)
-      .set({ analysisStatus: 'failed', updatedAt: new Date() })
+      .set({
+        analysisStatus: 'failed',
+        browserHintDecisionReason: 'analysis_failed',
+        analysisFeatures: null,
+        updatedAt: new Date(),
+      })
       .where(eq(uploadedTracks.id, trackId));
   }
 }
+
+export const __testables = {
+  BROWSER_HINT_CONFIDENCE_THRESHOLD,
+  BROWSER_HINT_TEMPO_CONFIDENCE_THRESHOLD,
+  BROWSER_HINT_KEY_CONFIDENCE_THRESHOLD,
+  camelotFromKeySignature,
+  isBrowserAnalysisHint,
+  shouldUseBrowserHint,
+  getBrowserHintDecisionReason,
+  resolveAcceptedBrowserHint,
+  buildDbUpdateFromBrowserHint,
+};

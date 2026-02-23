@@ -2,8 +2,17 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Play, Pause, Download, Volume2, VolumeX, ChevronDown, ChevronUp, Mic2, Drum, Guitar, Music } from 'lucide-react';
+import { Play, Pause, Download, Volume2, VolumeX, ChevronDown, ChevronUp, Mic2, Drum, Guitar, Music, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { getPublicAudioPipelineFeatureFlags } from '@/lib/audio/feature-flags';
+import {
+  buildTransitionAutomationPlan,
+  createPreviewGraph,
+  type PreviewGraph,
+  type PreviewGraphCapabilities,
+  type PreviewTransitionStyle,
+} from '@/lib/audio/preview-graph';
+import { recordPreviewQaTelemetry } from '@/lib/audio/preview-qa-telemetry';
 import { cn } from '@/lib/utils/helpers';
 
 export interface Stem {
@@ -27,6 +36,15 @@ const STEM_CONFIG: Record<string, { icon: typeof Mic2; color: string; label: str
   bass: { icon: Guitar, color: 'text-blue-400 bg-blue-500/10 border-blue-500/20', label: 'Bass' },
   other: { icon: Music, color: 'text-green-400 bg-green-500/10 border-green-500/20', label: 'Other' },
 };
+
+const TRANSITION_PREVIEW_STYLE_OPTIONS: Array<{ value: PreviewTransitionStyle; label: string }> = [
+  { value: 'smooth', label: 'Smooth' },
+  { value: 'energy', label: 'Energy' },
+  { value: 'drop', label: 'Drop' },
+  { value: 'filter_sweep', label: 'Filter Sweep' },
+  { value: 'echo_reverb', label: 'Echo + Reverb' },
+  { value: 'tape_stop', label: 'Tape Stop' },
+];
 
 function StemTrack({ stem, isPlaying, onTogglePlay, onDownload }: { 
   stem: Stem; 
@@ -151,10 +169,68 @@ function StemTrack({ stem, isPlaying, onTogglePlay, onDownload }: {
 }
 
 export function StemPlayer({ trackId, trackName, className }: StemPlayerProps) {
+  const audioFeatureFlags = getPublicAudioPipelineFeatureFlags();
   const [isExpanded, setIsExpanded] = useState(false);
   const [stems, setStems] = useState<Stem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [playingStems, setPlayingStems] = useState<Set<string>>(new Set());
+  const [previewTransitionStyle, setPreviewTransitionStyle] = useState<PreviewTransitionStyle>('smooth');
+  const [isTransitionPreviewing, setIsTransitionPreviewing] = useState(false);
+  const [previewGraphCapabilities, setPreviewGraphCapabilities] = useState<PreviewGraphCapabilities | null>(null);
+  const [previewGraphError, setPreviewGraphError] = useState<string | null>(null);
+  const previewGraphRef = useRef<PreviewGraph | null>(null);
+  const previewUiTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const stopTransitionPreviewUiTimer = () => {
+    if (previewUiTimerRef.current) {
+      clearTimeout(previewUiTimerRef.current);
+      previewUiTimerRef.current = null;
+    }
+  };
+
+  const stopTransitionPreview = () => {
+    stopTransitionPreviewUiTimer();
+    previewGraphRef.current?.stopPlayback();
+    setIsTransitionPreviewing(false);
+  };
+
+  const getTransitionPreviewSources = () => {
+    const completed = stems.filter((stem) => stem.status === 'completed' && stem.playUrl);
+    const vocalStem = completed.find((stem) => stem.stemType === 'vocals');
+    const instrumentalStem =
+      completed.find((stem) => stem.stemType === 'other') ??
+      completed.find((stem) => stem.stemType === 'drums') ??
+      completed.find((stem) => stem.stemType === 'bass');
+
+    if (!vocalStem?.playUrl || !instrumentalStem?.playUrl) {
+      return null;
+    }
+
+    return {
+      vocalStem,
+      instrumentalStem,
+      vocalUrl: vocalStem.playUrl,
+      instrumentalUrl: instrumentalStem.playUrl,
+    };
+  };
+
+  const ensurePreviewGraph = async () => {
+    if (previewGraphRef.current) {
+      return previewGraphRef.current;
+    }
+
+    const graph = await createPreviewGraph();
+    previewGraphRef.current = graph;
+    setPreviewGraphCapabilities(graph.capabilities);
+    if (!graph.capabilities.available) {
+      setPreviewGraphError(graph.capabilities.reason ?? 'Browser preview graph unavailable');
+      recordPreviewQaTelemetry('capability_unavailable', graph.capabilities.reason);
+    } else {
+      setPreviewGraphError(null);
+      recordPreviewQaTelemetry('capability_probe', 'stem_player');
+    }
+    return graph;
+  };
 
   const loadStems = async () => {
     if (stems.length > 0) return;
@@ -179,11 +255,13 @@ export function StemPlayer({ trackId, trackName, className }: StemPlayerProps) {
     } else {
       // Stop all playing stems when collapsing
       setPlayingStems(new Set());
+      stopTransitionPreview();
     }
     setIsExpanded(!isExpanded);
   };
 
   const handleTogglePlay = (stemId: string) => {
+    stopTransitionPreview();
     setPlayingStems(prev => {
       const next = new Set(prev);
       if (next.has(stemId)) {
@@ -215,6 +293,7 @@ export function StemPlayer({ trackId, trackName, className }: StemPlayerProps) {
   };
 
   const handlePlayAll = () => {
+    stopTransitionPreview();
     const completedStems = stems.filter(s => s.status === 'completed' && s.playUrl);
     if (playingStems.size > 0) {
       setPlayingStems(new Set());
@@ -223,8 +302,60 @@ export function StemPlayer({ trackId, trackName, className }: StemPlayerProps) {
     }
   };
 
+  const handlePreviewTransition = async () => {
+    const sources = getTransitionPreviewSources();
+    if (!sources) {
+      setPreviewGraphError('Transition preview requires vocals plus one instrumental stem');
+      return;
+    }
+
+    setPreviewGraphError(null);
+    setPlayingStems(new Set());
+
+    try {
+      const graph = await ensurePreviewGraph();
+      if (!graph.capabilities.available) {
+        setPreviewGraphError(graph.capabilities.reason ?? 'Browser preview graph unavailable');
+        recordPreviewQaTelemetry('capability_unavailable', graph.capabilities.reason);
+        return;
+      }
+
+      await graph.loadPlayers({
+        vocalUrl: sources.vocalUrl,
+        instrumentalUrl: sources.instrumentalUrl,
+      });
+      graph.setMix({ vocalGain: 1, instrumentalGain: 1, wetFx: 0.25 });
+
+      const plan = buildTransitionAutomationPlan(previewTransitionStyle, 4);
+      setIsTransitionPreviewing(true);
+      await graph.playTransitionPreview(plan);
+      recordPreviewQaTelemetry('preview_started', `stem_player:${previewTransitionStyle}`);
+
+      stopTransitionPreviewUiTimer();
+      previewUiTimerRef.current = setTimeout(() => {
+        setIsTransitionPreviewing(false);
+      }, Math.ceil((plan.durationSeconds + 2) * 1000));
+    } catch (error) {
+      setIsTransitionPreviewing(false);
+      setPreviewGraphError(error instanceof Error ? error.message : 'Failed to preview transition');
+      recordPreviewQaTelemetry('preview_failed', error instanceof Error ? error.message : 'unknown');
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (previewUiTimerRef.current) {
+        clearTimeout(previewUiTimerRef.current);
+        previewUiTimerRef.current = null;
+      }
+      previewGraphRef.current?.dispose();
+      previewGraphRef.current = null;
+    };
+  }, []);
+
   const completedCount = stems.filter(s => s.status === 'completed').length;
   const isAllPlaying = playingStems.size > 0;
+  const transitionPreviewSources = getTransitionPreviewSources();
 
   return (
     <div className={cn('mt-3', className)}>
@@ -261,7 +392,59 @@ export function StemPlayer({ trackId, trackName, className }: StemPlayerProps) {
               ) : (
                 <>
                   {/* Play All / Stop All button */}
-                  <div className="flex justify-end mb-2">
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    {audioFeatureFlags.toneJsPreviewGraph && (
+                      <div className="flex-1 rounded-lg border border-purple-500/20 bg-purple-500/5 p-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[11px] uppercase tracking-wide text-purple-300/80">
+                            Tone.js Transition Preview
+                          </span>
+                          <select
+                            value={previewTransitionStyle}
+                            onChange={(e) => setPreviewTransitionStyle(e.target.value as PreviewTransitionStyle)}
+                            className="h-7 rounded border border-white/10 bg-black/40 px-2 text-xs text-white"
+                            disabled={isTransitionPreviewing}
+                          >
+                            {TRANSITION_PREVIEW_STYLE_OPTIONS.map((style) => (
+                              <option key={style.value} value={style.value}>
+                                {style.label}
+                              </option>
+                            ))}
+                          </select>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={isTransitionPreviewing ? stopTransitionPreview : handlePreviewTransition}
+                            className="h-7 px-3 text-xs border border-purple-500/30 hover:bg-purple-500/10"
+                            disabled={!transitionPreviewSources && !isTransitionPreviewing}
+                          >
+                            {isTransitionPreviewing ? (
+                              <>
+                                <Pause className="w-3 h-3 mr-1" />
+                                Stop FX Preview
+                              </>
+                            ) : (
+                              <>
+                                <Zap className="w-3 h-3 mr-1" />
+                                Preview FX
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                        <p className="mt-1 text-[11px] text-gray-400">
+                          {previewGraphError
+                            ? previewGraphError
+                            : transitionPreviewSources
+                              ? `Uses ${STEM_CONFIG[transitionPreviewSources.vocalStem.stemType].label.toLowerCase()} + ${STEM_CONFIG[transitionPreviewSources.instrumentalStem.stemType].label.toLowerCase()} stems for browser-side FX auditioning.`
+                              : 'Requires completed vocals and at least one instrumental stem (other/drums/bass).'}
+                        </p>
+                        {previewGraphCapabilities && !previewGraphCapabilities.available && previewGraphCapabilities.reason && (
+                          <p className="mt-1 text-[11px] text-amber-300/80">
+                            Fallback: {previewGraphCapabilities.reason}
+                          </p>
+                        )}
+                      </div>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"

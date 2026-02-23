@@ -14,6 +14,26 @@ export interface Track {
   bpm: number | null;
   musical_key: string | null;
   camelot_key?: string | null;
+  bpm_confidence?: number | null;
+  key_confidence?: number | null;
+  analysis_quality?: string | null;
+  analysis_version?: string | null;
+  browser_analysis_confidence?: number | null;
+  browser_hint_decision_reason?: string | null;
+  analysis_features?: {
+    version: 'mir-v1';
+    source: 'essentia' | 'meyda' | 'hybrid';
+    extractionMs?: number | null;
+    descriptors: {
+      rms?: number | null;
+      energy?: number | null;
+      zcr?: number | null;
+      spectralCentroid?: number | null;
+      spectralRolloff?: number | null;
+      flatnessDb?: number | null;
+      crest?: number | null;
+    };
+  } | null;
   beat_grid?: number[];
   waveform_lite?: number[];
   drop_moments?: number[];
@@ -182,8 +202,15 @@ export function TrackList({ tracks, onRemoveTrack, onStemsUpdated, className }: 
                     
                     {/* Analysis Status */}
                     {track.analysis_status === 'completed' ? (
-                      <div className="px-3 py-1 rounded-full bg-green-500/10 text-green-500 text-xs font-medium border border-green-500/20">
-                        Ready
+                      <div className="flex items-center gap-2">
+                        {track.analysis_quality === 'browser_hint' && (
+                          <div className="px-3 py-1 rounded-full bg-amber-500/10 text-amber-300 text-xs font-medium border border-amber-500/20">
+                            Browser Analyzed
+                          </div>
+                        )}
+                        <div className="px-3 py-1 rounded-full bg-green-500/10 text-green-500 text-xs font-medium border border-green-500/20">
+                          Ready
+                        </div>
                       </div>
                     ) : track.analysis_status === 'failed' ? (
                       <div className="px-3 py-1 rounded-full bg-red-500/10 text-red-500 text-xs font-medium border border-red-500/20">
@@ -218,11 +245,44 @@ export function TrackList({ tracks, onRemoveTrack, onStemsUpdated, className }: 
                         {track.bpm} BPM
                         {track.musical_key && <span className="text-gray-500">•</span>}
                         {track.musical_key}
+                        {(track.bpm_confidence != null || track.key_confidence != null) && (
+                          <>
+                            <span className="text-gray-500">•</span>
+                            <span className="text-[11px] text-gray-400">
+                              conf {Math.round(Math.max(track.bpm_confidence ?? 0, track.key_confidence ?? 0) * 100)}%
+                            </span>
+                          </>
+                        )}
                       </span>
                     )}
                   </div>
                 )}
                 {track.analysis_status === 'completed' && <Waveform beatGrid={track.beat_grid} waveformLite={track.waveform_lite} />}
+                {/* Section structure tags */}
+                {track.analysis_status === 'completed' && track.structure && track.structure.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {track.structure.slice(0, 6).map((section, idx) => {
+                      const colorMap: Record<string, string> = {
+                        'vocal-dominant': 'bg-pink-500/20 text-pink-300 border-pink-500/30',
+                        'percussive': 'bg-orange-500/20 text-orange-300 border-orange-500/30',
+                        'build': 'bg-yellow-500/20 text-yellow-300 border-yellow-500/30',
+                        'drop-like': 'bg-red-500/20 text-red-300 border-red-500/30',
+                        'ambient': 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
+                      };
+                      const style = colorMap[section.label] ?? 'bg-gray-500/20 text-gray-300 border-gray-500/30';
+                      const durationSec = Math.round(section.end - section.start);
+                      return (
+                        <span
+                          key={idx}
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-medium border ${style}`}
+                          title={`${section.start.toFixed(1)}s – ${section.end.toFixed(1)}s (confidence: ${Math.round(section.confidence * 100)}%)`}
+                        >
+                          {section.label} ({durationSec}s)
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
                 {track.analysis_status === 'completed' && track.drop_moments && track.drop_moments.length > 0 && (
                   <div className="mt-2 text-[11px] text-primary/80">Drops near {track.drop_moments.slice(0, 3).map((t) => `${Math.round(t)}s`).join(', ')}</div>
                 )}

@@ -1,11 +1,20 @@
 import { startTrackAnalysis } from '@/lib/audio/analysis-service';
 import { separateStems } from '@/lib/audio/stems-service';
 import { renderAutoDjMix } from '@/lib/audio/auto-dj-service';
+import type { BrowserAnalysisHint } from '@/lib/audio/types/analysis';
 
 type JobType = 'analysis' | 'stems' | 'mix';
 
 type JobPayload =
-  | { type: 'analysis'; trackId: string; buffer?: Buffer; storageUrl?: string; mimeType: string; fileName: string }
+  | {
+      type: 'analysis';
+      trackId: string;
+      buffer?: Buffer;
+      storageUrl?: string;
+      mimeType: string;
+      fileName: string;
+      browserAnalysisHint?: BrowserAnalysisHint;
+    }
   | { type: 'stems'; trackId: string; quality?: 'draft' | 'hifi' }
   | { type: 'mix'; mashupId: string; inputTrackIds: string[]; durationSeconds: number; mixMode?: 'standard' | 'vocals_over_instrumental' | 'drum_swap' };
 
@@ -48,8 +57,8 @@ class InMemoryQueue {
 
 const queue = new InMemoryQueue(4);
 
-queue.on('analysis', async ({ trackId, buffer, storageUrl, mimeType, fileName }) => {
-  await startTrackAnalysis({ trackId, buffer, storageUrl, mimeType, fileName });
+queue.on('analysis', async ({ trackId, buffer, storageUrl, mimeType, fileName, browserAnalysisHint }) => {
+  await startTrackAnalysis({ trackId, buffer, storageUrl, mimeType, fileName, browserAnalysisHint });
 });
 
 queue.on('stems', async ({ trackId, quality }) => {

@@ -1,0 +1,78 @@
+{
+  "id": "energy-arc-rules",
+  "version": "1.0.0",
+  "rules": [
+    {
+      "id": "energy.rising.early_low",
+      "description": "Rising arc: early segments with low energy get labeled as low and gain reduced",
+      "when": [
+        { "fact": "energyProfile", "op": "eq", "value": "rising" },
+        { "fact": "segmentPosition", "op": "lt", "value": 0.4 },
+        { "fact": "segmentEnergy", "op": "lt", "value": 0.5 }
+      ],
+      "actions": [
+        { "type": "set", "field": "energyLabel", "value": "low" },
+        { "type": "set", "field": "gainAdjust", "value": -0.1 }
+      ]
+    },
+    {
+      "id": "energy.rising.mid_build",
+      "description": "Rising arc: mid segments labeled as building",
+      "when": [
+        { "fact": "energyProfile", "op": "eq", "value": "rising" },
+        { "fact": "segmentPosition", "op": "gte", "value": 0.4 },
+        { "fact": "segmentPosition", "op": "lt", "value": 0.75 }
+      ],
+      "actions": [
+        { "type": "set", "field": "energyLabel", "value": "building" }
+      ]
+    },
+    {
+      "id": "energy.rising.peak",
+      "description": "Rising arc: late segments with high energy labeled as peak with gain boost",
+      "when": [
+        { "fact": "energyProfile", "op": "eq", "value": "rising" },
+        { "fact": "segmentPosition", "op": "gte", "value": 0.75 },
+        { "fact": "segmentEnergy", "op": "gte", "value": 0.6 }
+      ],
+      "actions": [
+        { "type": "set", "field": "energyLabel", "value": "peak" },
+        { "type": "set", "field": "gainAdjust", "value": 0.05 }
+      ]
+    },
+    {
+      "id": "energy.steady.flat",
+      "description": "Steady arc: all segments labeled as sustain",
+      "when": [
+        { "fact": "energyProfile", "op": "eq", "value": "steady" }
+      ],
+      "actions": [
+        { "type": "set", "field": "energyLabel", "value": "sustain" }
+      ]
+    },
+    {
+      "id": "energy.wave.trough",
+      "description": "Wave arc: low energy segments labeled as trough with reduced gain",
+      "when": [
+        { "fact": "energyProfile", "op": "eq", "value": "wave" },
+        { "fact": "segmentEnergy", "op": "lt", "value": 0.4 }
+      ],
+      "actions": [
+        { "type": "set", "field": "energyLabel", "value": "trough" },
+        { "type": "set", "field": "gainAdjust", "value": -0.05 }
+      ]
+    },
+    {
+      "id": "energy.wave.crest",
+      "description": "Wave arc: high energy segments labeled as crest with gain boost",
+      "when": [
+        { "fact": "energyProfile", "op": "eq", "value": "wave" },
+        { "fact": "segmentEnergy", "op": "gte", "value": 0.6 }
+      ],
+      "actions": [
+        { "type": "set", "field": "energyLabel", "value": "crest" },
+        { "type": "set", "field": "gainAdjust", "value": 0.05 }
+      ]
+    }
+  ]
+}

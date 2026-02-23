@@ -15,17 +15,10 @@ import {
 } from './huggingface-stems';
 
 export type StemType = (typeof stemTypeEnum.enumValues)[number];
-type StemQuality = (typeof stemQualityEnum.enumValues)[number];
+export type StemQuality = (typeof stemQualityEnum.enumValues)[number];
 
 const STEM_TYPES: StemType[] = ['vocals', 'drums', 'bass', 'other'];
 
-/**
- * Export types for use in other modules
- */
-export type {
-  StemType,
-  StemQuality,
-};
 const DEMUCS_SERVICE_URL = process.env.DEMUCS_SERVICE_URL || 'http://localhost:8001';
 
 // FFmpeg fallback filters (basic frequency-based separation)
@@ -40,7 +33,7 @@ if (ffmpegStatic) {
   ffmpeg.setFfmpegPath(ffmpegStatic as string);
 }
 
-type StemRecord = typeof trackStems.$inferSelect;
+export type StemRecord = typeof trackStems.$inferSelect;
 
 async function isDemucsAvailable(): Promise<boolean> {
   try {

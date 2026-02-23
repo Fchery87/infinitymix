@@ -10,8 +10,11 @@ import { log } from '@/lib/logger';
 import { logTelemetry } from '@/lib/telemetry';
 import { uploadBufferToStorage } from '@/lib/storage';
 import { mixStemsPerTrack, validateStemMixingConfig, type StemMixingConfig } from '@/lib/audio/stem-mixing-service';
-import { getAllStemBuffers, type StemRecord } from '@/lib/audio/stems-service';
+import { getAllStemBuffers, type StemType } from '@/lib/audio/stems-service';
 import { getTrack, updateTrack } from '@/lib/db';
+
+type StemBuffer = { buffer: Buffer; mimeType: string };
+type StemsByTrack = Map<string, Map<StemType, StemBuffer>>;
 
 /**
  * POST /api/mashups/stem-per-track
@@ -59,7 +62,7 @@ export async function POST(req: NextRequest) {
     // ========================================================================
     // 3. Fetch all stems for all tracks
     // ========================================================================
-    const stemRecordsByTrack: Map<string, Map<string, StemRecord>> = new Map();
+    const stemRecordsByTrack: StemsByTrack = new Map();
 
     for (const trackId of trackIds) {
       const track = await getTrack(trackId);
@@ -83,15 +86,24 @@ export async function POST(req: NextRequest) {
     // ========================================================================
     // 4. Build stem mixing configuration
     // ========================================================================
+    type TransitionInput = {
+      fromTrackId: string;
+      toTrackId: string;
+      style?: string;
+      duration?: number;
+      transitionPoint?: number;
+      crossfadeCurve?: string;
+      enableFilterSweep?: boolean;
+    };
     const config: StemMixingConfig = {
       tracks: [],
-      transitions: transitions.map((t: any) => ({
+      transitions: transitions.map((t: TransitionInput) => ({
         fromTrackId: t.fromTrackId,
         toTrackId: t.toTrackId,
-        style: t.style || 'standard',
+        style: (t.style || 'standard') as 'standard' | 'drum_swap' | 'vocals_only' | 'instrumental_bridge' | 'three_band_swap',
         duration: t.duration || 4,
         transitionPoint: t.transitionPoint,
-        crossfadeCurve: t.crossfadeCurve || 'smooth',
+        crossfadeCurve: (t.crossfadeCurve || 'smooth') as 'smooth' | 'drop' | 'cut' | 'energy' | 'filter_sweep' | 'echo_reverb' | 'backspin' | 'tape_stop' | 'stutter_edit' | 'three_band_swap' | 'bass_drop' | 'snare_roll' | 'noise_riser',
         enableFilterSweep: t.enableFilterSweep || false,
       })),
       processing: {
@@ -113,7 +125,7 @@ export async function POST(req: NextRequest) {
 
       config.tracks.push({
         id: track.id,
-        bpm: track.bpm,
+        bpm: track.bpm ? Number(track.bpm) : undefined,
         stems: {
           vocals: stems.get('vocals') ? {
             buffer: stems.get('vocals')!.buffer,

@@ -2,10 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { uploadedTracks } from '@/lib/db/schema';
-import { processSingleUpload, formatTrackResponse } from '@/lib/audio/upload-service';
+import {
+  processSingleUpload,
+  formatTrackResponse,
+  parseBrowserAnalysisHintsInput,
+} from '@/lib/audio/upload-service';
 import { audioUploadSchema } from '@/lib/utils/validation';
 import { ValidationError, AuthenticationError } from '@/lib/utils/error-handling';
-import { uploadRateLimit, generalRateLimit, withRateLimit } from '@/lib/utils/rate-limiting';
+import { uploadRateLimit, generalApiRateLimit, withRateLimit } from '@/lib/utils/rate-limiting';
 import { eq } from 'drizzle-orm';
 
 async function postHandler(request: NextRequest) {
@@ -15,12 +19,27 @@ async function postHandler(request: NextRequest) {
 
     const formData = await request.formData();
     const files = formData.getAll('files') as File[];
+    const projectId = formData.get('projectId');
+    const browserHints = parseBrowserAnalysisHintsInput(
+      formData.get('browserAnalysisHints')
+    );
     
     const { files: validatedFiles } = audioUploadSchema.parse({ files });
     
     const createdTracks = [];
-    for (const file of validatedFiles) {
-      const track = await processSingleUpload(user.id, file);
+    for (const [index, file] of validatedFiles.entries()) {
+      const matchingHint =
+        browserHints[index] &&
+        browserHints[index].fileName === file.name &&
+        browserHints[index].fileSizeBytes === file.size
+          ? browserHints[index]
+          : undefined;
+      const track = await processSingleUpload(
+        user.id,
+        file,
+        typeof projectId === 'string' ? projectId : null,
+        matchingHint
+      );
       createdTracks.push(track);
     }
 
@@ -85,4 +104,4 @@ async function getHandler(request: NextRequest) {
   }
 }
 
-export const GET = withRateLimit(generalRateLimit)(getHandler);
+export const GET = withRateLimit(generalApiRateLimit)(getHandler);

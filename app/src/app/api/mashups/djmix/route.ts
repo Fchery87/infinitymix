@@ -7,12 +7,17 @@ import { assertDurationQuota } from '@/lib/monetization';
 import { generateMashupName } from '@/lib/utils/helpers';
 import { logTelemetry, withTelemetry } from '@/lib/telemetry';
 import { and, eq, inArray } from 'drizzle-orm';
-import { renderAutoDjMix, planAutoDjMix, AutoDjTransitionStyle, AutoDjEnergyMode, AutoDjEventType } from '@/lib/audio/auto-dj-service';
+import { renderAutoDjMix, planAutoDjMix } from '@/lib/audio/auto-dj-service';
+import { withRateLimit, mashupGenerateRateLimit, generalApiRateLimit } from '@/lib/utils/rate-limiting';
+import { applyStylePackToAutoDjRequest, getBuiltInStylePackById, listBuiltInStylePackSummaries, validateStylePack, type StylePack } from '@/lib/styles';
+
+const withMashupRateLimit = withRateLimit(mashupGenerateRateLimit);
+const withGeneralRateLimit = withRateLimit(generalApiRateLimit);
 
 /**
  * GET endpoint - Return available transition styles and configuration
  */
-export async function GET() {
+async function handleGet() {
   return NextResponse.json({
     transitionStyles: [
       {
@@ -123,6 +128,7 @@ export async function GET() {
       { id: 'build', name: 'Build', description: 'Gradually increase energy' },
       { id: 'wave', name: 'Wave', description: 'Energy rises and falls in waves' },
     ] as const,
+    stylePacks: listBuiltInStylePackSummaries(),
     eventTypes: [
       { id: 'wedding', name: 'Wedding', description: 'Smooth, long transitions for weddings' },
       { id: 'birthday', name: 'Birthday', description: 'Energetic, fun transitions' },
@@ -197,6 +203,9 @@ const djMixSchema = z.object({
   keepOrder: z.boolean().optional(),
   preferStems: z.boolean().optional(),
   eventType: z.enum(['wedding', 'birthday', 'sweet16', 'club', 'default']).optional(),
+  stylePackId: z.string().min(2).max(64).optional(),
+  stylePack: z.unknown().optional(),
+  plannerDebugTrace: z.boolean().optional(),
   name: z.string().min(1).max(255).optional(),
   
   // New advanced processing options
@@ -209,7 +218,7 @@ const djMixSchema = z.object({
   tempoRampSeconds: z.number().min(0).max(10).optional(),
 });
 
-export async function POST(request: NextRequest) {
+async function handlePost(request: NextRequest) {
   try {
     const user = await getSessionUser(request);
     if (!user) {
@@ -218,6 +227,28 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const parsed = djMixSchema.parse(body);
+    let resolvedStylePack: StylePack | null = null;
+
+    if (parsed.stylePackId) {
+      resolvedStylePack = getBuiltInStylePackById(parsed.stylePackId);
+      if (!resolvedStylePack) {
+        return NextResponse.json(
+          { error: 'Unknown stylePackId', stylePackId: parsed.stylePackId },
+          { status: 400 }
+        );
+      }
+    }
+
+    if (parsed.stylePack != null) {
+      const validation = validateStylePack(parsed.stylePack);
+      if (!validation.valid) {
+        return NextResponse.json(
+          { error: 'Invalid style pack', validationErrors: validation.errors },
+          { status: 400 }
+        );
+      }
+      resolvedStylePack = validation.stylePack;
+    }
 
     const tracks = await db
       .select({
@@ -273,15 +304,34 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No analysis info available for selected tracks' }, { status: 400 });
     }
 
+    const plannerRequest = resolvedStylePack
+      ? applyStylePackToAutoDjRequest(
+          {
+            energyMode: parsed.energyMode,
+            transitionStyle: parsed.transitionStyle,
+            preferStems: parsed.preferStems,
+            keepOrder: parsed.keepOrder,
+            fadeDurationSeconds: parsed.fadeDurationSeconds,
+          },
+          resolvedStylePack
+        )
+      : {
+          energyMode: parsed.energyMode,
+          transitionStyle: parsed.transitionStyle,
+          preferStems: parsed.preferStems,
+          keepOrder: parsed.keepOrder,
+          fadeDurationSeconds: parsed.fadeDurationSeconds,
+        };
+
     const plan = await planAutoDjMix(trackInfos, {
       trackIds: parsed.trackIds,
       targetDurationSeconds: parsed.targetDurationSeconds,
       targetBpm: parsed.targetBpm,
-      transitionStyle: parsed.transitionStyle,
-      fadeDurationSeconds: parsed.fadeDurationSeconds,
-      energyMode: parsed.energyMode,
-      keepOrder: parsed.keepOrder,
-      preferStems: parsed.preferStems,
+      transitionStyle: plannerRequest.transitionStyle,
+      fadeDurationSeconds: plannerRequest.fadeDurationSeconds,
+      energyMode: plannerRequest.energyMode,
+      keepOrder: plannerRequest.keepOrder,
+      preferStems: plannerRequest.preferStems,
       eventType: parsed.eventType,
       enableFilterSweep: parsed.enableFilterSweep,
       tempoRampSeconds: parsed.tempoRampSeconds,
@@ -294,7 +344,20 @@ export async function POST(request: NextRequest) {
 
     await db
       .update(mashups)
-      .set({ recommendationContext: { plan, request: parsed } })
+      .set({
+        recommendationContext: {
+          plan,
+          request: parsed,
+          stylePackApplied: resolvedStylePack
+            ? {
+                id: resolvedStylePack.id,
+                name: resolvedStylePack.name,
+                schemaVersion: resolvedStylePack.schemaVersion,
+              }
+            : null,
+          plannerDebugTraceRequested: Boolean(parsed.plannerDebugTrace),
+        },
+      })
       .where(eq(mashups.id, mashup.id));
 
     (async () => {
@@ -306,11 +369,11 @@ export async function POST(request: NextRequest) {
               trackIds: parsed.trackIds,
               targetDurationSeconds: parsed.targetDurationSeconds,
               targetBpm: parsed.targetBpm,
-              transitionStyle: parsed.transitionStyle,
-              fadeDurationSeconds: parsed.fadeDurationSeconds,
-              energyMode: parsed.energyMode,
-              keepOrder: parsed.keepOrder,
-              preferStems: parsed.preferStems,
+              transitionStyle: plannerRequest.transitionStyle,
+              fadeDurationSeconds: plannerRequest.fadeDurationSeconds,
+              energyMode: plannerRequest.energyMode,
+              keepOrder: plannerRequest.keepOrder,
+              preferStems: plannerRequest.preferStems,
               eventType: parsed.eventType,
               plan,
               enableMultibandCompression: parsed.enableMultibandCompression,
@@ -339,7 +402,15 @@ export async function POST(request: NextRequest) {
       }
     })();
 
-    logTelemetry({ name: 'autoDj.request.accepted', properties: { mashupId: mashup.id, trackCount: parsed.trackIds.length } });
+    logTelemetry({
+      name: 'autoDj.request.accepted',
+      properties: {
+        mashupId: mashup.id,
+        trackCount: parsed.trackIds.length,
+        stylePackId: resolvedStylePack?.id ?? null,
+        plannerDebugTrace: Boolean(parsed.plannerDebugTrace),
+      },
+    });
 
     return NextResponse.json({
       id: mashup.id,
@@ -364,3 +435,6 @@ async function getTrackInfo(trackId: string) {
   const { getTrackInfoForMixing } = await import('@/lib/audio/stems-service');
   return getTrackInfoForMixing(trackId);
 }
+
+export const GET = withGeneralRateLimit(handleGet);
+export const POST = withMashupRateLimit(handlePost);

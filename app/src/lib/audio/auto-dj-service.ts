@@ -29,6 +29,7 @@ function configureFFmpeg() {
 
   // 1. Try ffmpeg-static package (newer versions)
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const ffmpegStaticPath = require('ffmpeg-static');
     if (typeof ffmpegStaticPath === 'string') {
       possiblePaths.push(ffmpegStaticPath);
@@ -36,9 +37,9 @@ function configureFFmpeg() {
       possiblePaths.push(ffmpegStaticPath.path);
     } else if (
       typeof ffmpegStaticPath === 'object' &&
-      (ffmpegStaticPath as any).ffmpegPath
+      (ffmpegStaticPath as Record<string, unknown>).ffmpegPath
     ) {
-      possiblePaths.push((ffmpegStaticPath as any).ffmpegPath);
+      possiblePaths.push((ffmpegStaticPath as Record<string, unknown>).ffmpegPath as string);
     }
   } catch (error) {
     log('warn', 'ffmpeg.static.notFound', { error: (error as Error).message });
@@ -146,6 +147,7 @@ function configureFFmpeg() {
   // Try each path until one works
   for (const ffmpegPath of possiblePaths) {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const fs = require('fs');
       if (fs.existsSync(ffmpegPath)) {
         ffmpeg.setFfmpegPath(ffmpegPath);

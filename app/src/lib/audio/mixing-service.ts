@@ -25,6 +25,7 @@ function configureFFmpeg() {
 
   // 1. Try ffmpeg-static package
   try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const ffmpegStaticPath = require('ffmpeg-static');
     if (typeof ffmpegStaticPath === 'string') {
       possiblePaths.push(ffmpegStaticPath);
@@ -32,9 +33,9 @@ function configureFFmpeg() {
       possiblePaths.push(ffmpegStaticPath.path);
     } else if (
       typeof ffmpegStaticPath === 'object' &&
-      (ffmpegStaticPath as any).ffmpegPath
+      (ffmpegStaticPath as Record<string, unknown>).ffmpegPath
     ) {
-      possiblePaths.push((ffmpegStaticPath as any).ffmpegPath);
+      possiblePaths.push((ffmpegStaticPath as Record<string, unknown>).ffmpegPath as string);
     }
   } catch (error) {
     // Ignore
@@ -78,6 +79,7 @@ function configureFFmpeg() {
   // Try each path
   for (const ffmpegPath of possiblePaths) {
     try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const fs = require('fs');
       if (fs.existsSync(ffmpegPath)) {
         ffmpeg.setFfmpegPath(ffmpegPath);
@@ -122,7 +124,7 @@ export interface SidechainConfig {
  * Enhanced mixing configuration
  */
 export interface MixingConfig {
-  inputBuffers: Buffer[];
+  inputBuffers?: Buffer[];
   duration?: number;
   outputFormat?: string;
 
@@ -230,14 +232,15 @@ export async function mixToBuffer(
 
   // Route to per-stem mixing if configured
   if (config.stemMixing) {
-    return mixStemsPerTrack(config.stemMixing, config.duration).then(
+    const stemMixingConfig = config.stemMixing;
+    return mixStemsPerTrack(stemMixingConfig, config.duration).then(
       (result) => ({
         buffer: result.buffer,
         metrics: {
           processingTimeMs: result.metrics.processingTimeMs,
           outputSizeBytes: result.metrics.outputSizeBytes,
-          tracksMixed: config.stemMixing.tracks.length,
-          transitionsApplied: config.stemMixing.transitions.length,
+          tracksMixed: stemMixingConfig.tracks.length,
+          transitionsApplied: stemMixingConfig.transitions.length,
           peakDb: result.metrics.peakDb,
           rmsDb: result.metrics.rmsDb,
         },
@@ -248,7 +251,7 @@ export async function mixToBuffer(
   // Otherwise, use simple mixing
   const { buffer, metrics } = await simpleMix(inputBuffers, config);
 
-  log('info', 'mixing.completed', metrics);
+  log('info', 'mixing.completed', metrics as unknown as Record<string, unknown>);
 
   return { buffer, metrics };
 }
@@ -557,6 +560,42 @@ export function validateMixingConfig(config: MixingConfig): {
     valid: errors.length === 0,
     errors,
   };
+}
+
+/**
+ * Stem Mashup Configuration
+ */
+export interface StemMashupConfig {
+  vocalTrackId: string;
+  instrumentalTrackId: string;
+  targetBpm?: number;
+  autoKeyMatch?: boolean;
+  pitchShiftSemitones?: number;
+  vocalVolume?: number;
+  instrumentalVolume?: number;
+  durationSeconds?: number;
+  beatAlign?: boolean;
+  beatAlignMode?: 'downbeat' | 'any';
+  crossfade?: {
+    enabled: boolean;
+    duration?: number;
+    style?: 'smooth' | 'drop' | 'cut' | 'energy';
+    transitionAt?: 'start' | 'drop' | 'chorus' | 'auto';
+  };
+}
+
+/**
+ * Render a stem-based mashup
+ * 
+ * @deprecated This function is a stub. Use mixStemsPerTrack from stem-mixing-service.ts instead.
+ */
+export async function renderStemMashup(
+  mashupId: string,
+  config: StemMashupConfig
+): Promise<void> {
+  throw new Error(
+    'renderStemMashup is not implemented. Use mixStemsPerTrack from stem-mixing-service.ts for per-stem mixing.'
+  );
 }
 
 log('info', 'mixing.service.loaded', {

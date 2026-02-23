@@ -185,3 +185,15 @@ export const getStorage = async (): Promise<StorageService> => {
 
 // For immediate use in route handlers
 export { Storage as MockStorage };
+
+/**
+ * Convenience function to upload a buffer to storage
+ */
+export async function uploadBufferToStorage(
+  buffer: Buffer,
+  filename: string,
+  mimeType: string = 'audio/wav'
+): Promise<string> {
+  const storage = await getStorage();
+  return storage.uploadFile(buffer, filename, mimeType);
+}

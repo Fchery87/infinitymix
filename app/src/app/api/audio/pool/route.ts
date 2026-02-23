@@ -6,15 +6,27 @@ import { validateAudioFile } from '@/lib/utils/helpers';
 import {
   processSingleUpload,
   formatTrackResponse,
+  parseBrowserAnalysisHintsInput,
 } from '@/lib/audio/upload-service';
 import { audioUploadSchema } from '@/lib/utils/validation';
 import {
   AuthenticationError,
   ValidationError,
 } from '@/lib/utils/error-handling';
-import { eq } from 'drizzle-orm';
+import {
+  withRateLimit,
+  uploadRateLimit,
+  generalApiRateLimit,
+} from '@/lib/utils/rate-limiting';
+import { and, eq, desc, sql } from 'drizzle-orm';
 
-export async function POST(request: NextRequest) {
+const withUploadRateLimit = withRateLimit(uploadRateLimit);
+const withGeneralRateLimit = withRateLimit(generalApiRateLimit);
+
+const DEFAULT_PAGE_SIZE = 20;
+const MAX_PAGE_SIZE = 100;
+
+async function handlePost(request: NextRequest) {
   try {
     const user = await getSessionUser(request);
     if (!user) throw new AuthenticationError();
@@ -22,6 +34,9 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const files = formData.getAll('files') as File[];
     const projectId = formData.get('projectId') as string | null;
+    const browserHints = parseBrowserAnalysisHintsInput(
+      formData.get('browserAnalysisHints')
+    );
 
     audioUploadSchema.parse({ files });
 
@@ -35,7 +50,7 @@ export async function POST(request: NextRequest) {
 
     const uploadedFiles = [];
     const totalSize = files.reduce((sum, file) => sum + file.size, 0);
-    const maxTotalSize = 100 * 1024 * 1024; // 100MB total
+    const maxTotalSize = 100 * 1024 * 1024;
 
     if (totalSize > maxTotalSize) {
       throw new ValidationError('Total file size exceeds 100MB limit');
@@ -49,8 +64,14 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    for (const file of files) {
-      const track = await processSingleUpload(user.id, file, projectId);
+    for (const [index, file] of files.entries()) {
+      const matchingHint =
+        browserHints[index] &&
+        browserHints[index].fileName === file.name &&
+        browserHints[index].fileSizeBytes === file.size
+          ? browserHints[index]
+          : undefined;
+      const track = await processSingleUpload(user.id, file, projectId, matchingHint);
       uploadedFiles.push(track);
     }
 
@@ -73,22 +94,72 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function GET(request: NextRequest) {
+async function handleGet(request: NextRequest) {
   try {
     const user = await getSessionUser(request);
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const tracks = await db
-      .select()
-      .from(uploadedTracks)
-      .where(eq(uploadedTracks.userId, user.id))
-      .orderBy(uploadedTracks.createdAt);
+    const { searchParams } = new URL(request.url);
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
+    const analysisQualityFilter = searchParams.get('analysisQuality')?.trim() || null;
+    const limit = Math.min(
+      MAX_PAGE_SIZE,
+      Math.max(1, parseInt(searchParams.get('limit') || String(DEFAULT_PAGE_SIZE), 10))
+    );
+    const offset = (page - 1) * limit;
+    const whereClause = analysisQualityFilter
+      ? and(
+          eq(uploadedTracks.userId, user.id),
+          eq(uploadedTracks.analysisQuality, analysisQualityFilter)
+        )
+      : eq(uploadedTracks.userId, user.id);
 
+    const [tracks, countResult, qualityCountsRaw] = await Promise.all([
+      db
+        .select()
+        .from(uploadedTracks)
+        .where(whereClause)
+        .orderBy(desc(uploadedTracks.createdAt))
+        .limit(limit)
+        .offset(offset),
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(uploadedTracks)
+        .where(whereClause),
+      db
+        .select({
+          analysisQuality: uploadedTracks.analysisQuality,
+          count: sql<number>`count(*)`,
+        })
+        .from(uploadedTracks)
+        .where(eq(uploadedTracks.userId, user.id))
+        .groupBy(uploadedTracks.analysisQuality),
+    ]);
+
+    const total = Number(countResult[0]?.count ?? 0);
     const formattedTracks = tracks.map(formatTrackResponse);
+    const qualityCounts = Object.fromEntries(
+      qualityCountsRaw.map((row) => [row.analysisQuality ?? 'unknown', Number(row.count ?? 0)])
+    );
 
-    return NextResponse.json(formattedTracks);
+    return NextResponse.json({
+      tracks: formattedTracks,
+      filters: {
+        analysisQuality: analysisQualityFilter,
+      },
+      debug: {
+        qualityCounts,
+      },
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        hasMore: offset + tracks.length < total,
+      },
+    });
   } catch (error) {
     console.error('Get tracks error:', error);
     return NextResponse.json(
@@ -97,3 +168,6 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
+export const POST = withUploadRateLimit(handlePost);
+export const GET = withGeneralRateLimit(handleGet);

@@ -8,6 +8,7 @@ import { ValidationError, AuthenticationError } from '@/lib/utils/error-handling
 import { getStorage } from '@/lib/storage';
 import { enqueueAnalysis } from '@/lib/queue';
 import { formatTrackResponse } from '@/lib/audio/upload-service';
+import type { BrowserAnalysisHint } from '@/lib/audio/types/analysis';
 import { uploadRateLimit, withRateLimit } from '@/lib/utils/rate-limiting';
 
 const ALLOWED_TYPES = ['audio/mpeg', 'audio/wav', 'audio/mp3', 'audio/wave'];
@@ -24,6 +25,7 @@ async function completeHandler(request: NextRequest) {
 
     const body = await request.json();
     const { key, filename, contentType, size } = completeUploadSchema.parse(body);
+    const browserAnalysisHint = (body.browserAnalysisHint ?? undefined) as BrowserAnalysisHint | undefined;
 
     if (!ALLOWED_TYPES.includes(contentType)) {
       throw new ValidationError(`Unsupported file type: ${contentType}`);
@@ -62,6 +64,7 @@ async function completeHandler(request: NextRequest) {
       storageUrl: locator,
       mimeType: contentType,
       fileName: filename,
+      browserAnalysisHint,
     });
 
     return NextResponse.json({ track: formatTrackResponse(track) });

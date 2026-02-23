@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 interface RateLimitConfig {
-  windowMs: number;  // Time window in milliseconds
-  maxRequests: number; // Max requests per window
+  windowMs: number;
+  maxRequests: number;
   message?: string;
   skipSuccessfulRequests?: boolean;
   skipFailedRequests?: boolean;
+  keyGenerator?: (request: NextRequest) => string;
 }
 
 type RateLimiter = ((request: NextRequest) => NextResponse | null) & {
@@ -17,9 +18,54 @@ type Handler<TArgs extends unknown[] = unknown[]> = (
   ...args: TArgs
 ) => Promise<NextResponse> | NextResponse;
 
-// Simple in-memory rate limiter for development
-// In production, you'd want to use Redis or a database
-const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
+interface RateLimitEntry {
+  count: number;
+  resetTime: number;
+}
+
+const rateLimitStore = new Map<string, RateLimitEntry>();
+
+let cleanupInterval: NodeJS.Timeout | null = null;
+
+function startCleanupTimer(): void {
+  if (cleanupInterval) return;
+  cleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of rateLimitStore.entries()) {
+      if (entry.resetTime < now) {
+        rateLimitStore.delete(key);
+      }
+    }
+  }, 60000);
+}
+
+if (typeof window === 'undefined') {
+  startCleanupTimer();
+}
+
+const globalForRateLimit = globalThis as unknown as {
+  rateLimitStore: Map<string, RateLimitEntry> | undefined;
+};
+
+if (!globalForRateLimit.rateLimitStore) {
+  globalForRateLimit.rateLimitStore = rateLimitStore;
+}
+const store = globalForRateLimit.rateLimitStore;
+
+function defaultKeyGenerator(request: NextRequest): string {
+  const forwardedFor = request.headers.get('x-forwarded-for');
+  const realIp = request.headers.get('x-real-ip');
+  const ip = realIp || (forwardedFor ? forwardedFor.split(',')[0].trim() : 'unknown');
+  return `ip:${ip}`;
+}
+
+export function createUserKeyGenerator(getUserId: (request: NextRequest) => string | null): (request: NextRequest) => string {
+  return (request: NextRequest) => {
+    const userId = getUserId(request);
+    if (userId) return `user:${userId}`;
+    return defaultKeyGenerator(request);
+  };
+}
 
 export function createRateLimiter(config: RateLimitConfig): RateLimiter {
   const {
@@ -28,33 +74,24 @@ export function createRateLimiter(config: RateLimitConfig): RateLimiter {
     message = `Too many requests. Try again in ${Math.ceil(windowMs / 1000)} seconds.`,
     skipSuccessfulRequests = false,
     skipFailedRequests = false,
+    keyGenerator = defaultKeyGenerator,
   } = config;
 
   const rateLimiter: RateLimiter = function rateLimit(request: NextRequest): NextResponse | null {
-    const identifier = getIdentifier(request);
+    const identifier = keyGenerator(request);
     const now = Date.now();
 
-    // Clean up expired entries
-    for (const [key, value] of rateLimitStore.entries()) {
-      if (value.resetTime < now) {
-        rateLimitStore.delete(key);
-      }
-    }
-
-    // Get or create rate limit entry for this identifier
-    let entry = rateLimitStore.get(identifier);
+    let entry = store.get(identifier);
     if (!entry || entry.resetTime < now) {
       entry = {
         count: 0,
         resetTime: now + windowMs,
       };
-      rateLimitStore.set(identifier, entry);
+      store.set(identifier, entry);
     }
 
-    // Increment count
     entry.count++;
 
-    // Check if over limit
     if (entry.count > maxRequests) {
       const resetTime = entry.resetTime;
       const retryAfter = Math.ceil((resetTime - now) / 1000);
@@ -86,25 +123,12 @@ export function createRateLimiter(config: RateLimitConfig): RateLimiter {
     message,
     skipSuccessfulRequests,
     skipFailedRequests,
+    keyGenerator,
   };
 
   return rateLimiter;
 }
 
-// Get identifier for rate limiting
-function getIdentifier(request: NextRequest): string {
-  // Try to get IP address
-  const forwardedFor = request.headers.get('x-forwarded-for');
-  const realIp = request.headers.get('x-real-ip');
-  const ip = realIp || (forwardedFor ? forwardedFor.split(',')[0] : 'unknown');
-
-  // Try to get user ID from session (if available)
-  // This would require passing session info, for now just use IP
-  const identifier = `ip:${ip}`;
-  return identifier;
-}
-
-// Rate limiting middleware wrapper
 export function withRateLimit(rateLimiter: RateLimiter) {
   return function<TArgs extends unknown[]>(handler: Handler<TArgs>) {
     return async (request: NextRequest, ...args: TArgs) => {
@@ -115,10 +139,9 @@ export function withRateLimit(rateLimiter: RateLimiter) {
 
       const response = await handler(request, ...args);
 
-      // Add rate limit headers to successful responses
       if (response instanceof NextResponse) {
-        const identifier = getIdentifier(request);
-        const entry = rateLimitStore.get(identifier);
+        const identifier = rateLimiter.config.keyGenerator(request);
+        const entry = store.get(identifier);
         
         if (entry) {
           const remaining = Math.max(0, rateLimiter.config.maxRequests - entry.count);
@@ -133,21 +156,32 @@ export function withRateLimit(rateLimiter: RateLimiter) {
   };
 }
 
-// Pre-configured rate limiters for different use cases
 export const authRateLimit = createRateLimiter({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  maxRequests: 10, // 10 requests per 15 minutes
+  windowMs: 15 * 60 * 1000,
+  maxRequests: 10,
   message: 'Too many authentication attempts. Please try again later.',
 });
 
-export const generalRateLimit = createRateLimiter({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  maxRequests: 100, // 100 requests per 15 minutes
+export const generalApiRateLimit = createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 60,
   message: 'Rate limit exceeded. Please try again later.',
 });
 
 export const uploadRateLimit = createRateLimiter({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  maxRequests: 20, // 20 uploads per hour
+  windowMs: 60 * 60 * 1000,
+  maxRequests: 20,
   message: 'Upload limit exceeded. Please try again later.',
+});
+
+export const mashupGenerateRateLimit = createRateLimiter({
+  windowMs: 60 * 60 * 1000,
+  maxRequests: 10,
+  message: 'Mashup generation limit exceeded. Please try again later.',
+});
+
+export const heavyOperationRateLimit = createRateLimiter({
+  windowMs: 60 * 60 * 1000,
+  maxRequests: 30,
+  message: 'Too many heavy operations. Please try again later.',
 });

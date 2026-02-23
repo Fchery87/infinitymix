@@ -7,7 +7,7 @@ import { enqueueStems } from '@/lib/queue';
 import { ensureStemsQuality } from '@/lib/monetization';
 import { AuthenticationError } from '@/lib/utils/error-handling';
 import { eq, and } from 'drizzle-orm';
-import { generalRateLimit } from '@/lib/utils/rate-limiting';
+import { generalApiRateLimit } from '@/lib/utils/rate-limiting';
 
 async function ensureOwnership(trackId: string, userId: string) {
   const [record] = await db
@@ -21,7 +21,7 @@ async function ensureOwnership(trackId: string, userId: string) {
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ trackId: string }> }) {
   try {
-    const limited = generalRateLimit(request);
+    const limited = generalApiRateLimit(request);
     if (limited) return limited;
 
     const user = await getSessionUser(request);
@@ -59,7 +59,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ trackId: string }> }) {
   try {
-    const limited = generalRateLimit(request);
+    const limited = generalApiRateLimit(request);
     if (limited) return limited;
 
     const user = await getSessionUser(request);

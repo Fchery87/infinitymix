@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "updatedAt": "2026-02-23T00:00:00.000Z",
+  "notes": "Curated regression fixture manifest for baseline and comparative QA. Audio files are stored outside the repo.",
+  "fixtures": [
+    {
+      "id": "pop_vocal_124_cmaj",
+      "filename": "pop_vocal_124bpm_cmaj.mp3",
+      "genre": "pop",
+      "bpmExpected": 124,
+      "keyExpected": "Cmaj",
+      "tags": ["vocal-dominant", "chorus-heavy", "four-on-the-floor"],
+      "useCases": ["browser-bpm-check", "section-tagging", "vocal-mashup"],
+      "difficulty": "low"
+    },
+    {
+      "id": "hiphop_vocal_92_amin",
+      "filename": "hiphop_vocal_92bpm_amin.mp3",
+      "genre": "hiphop",
+      "bpmExpected": 92,
+      "keyExpected": "Amin",
+      "tags": ["vocal-dominant", "swing", "sparse-drums"],
+      "useCases": ["tempo-robustness", "phrase-alignment", "fallback-thresholds"],
+      "difficulty": "medium"
+    },
+    {
+      "id": "edm_drop_128_fmin",
+      "filename": "edm_drop_128bpm_fmin.wav",
+      "genre": "edm",
+      "bpmExpected": 128,
+      "keyExpected": "Fmin",
+      "tags": ["drop-heavy", "build", "high-energy"],
+      "useCases": ["drop-detection", "section-selection", "transition-effects"],
+      "difficulty": "low"
+    },
+    {
+      "id": "rock_band_140_emaj",
+      "filename": "rock_band_140bpm_emaj.mp3",
+      "genre": "rock",
+      "bpmExpected": 140,
+      "keyExpected": "Emaj",
+      "tags": ["live-drums", "guitar-rich", "dynamic-sections"],
+      "useCases": ["timbre-compatibility", "phrase-boundary-snap", "fallback-behavior"],
+      "difficulty": "high"
+    },
+    {
+      "id": "afrobeat_groove_105_gmaj",
+      "filename": "afrobeat_groove_105bpm_gmaj.mp3",
+      "genre": "afrobeat",
+      "bpmExpected": 105,
+      "keyExpected": "Gmaj",
+      "tags": ["percussive", "polyrhythmic", "steady-groove"],
+      "useCases": ["rhythmic-stability", "browser-analysis-confidence", "planner-testing"],
+      "difficulty": "medium"
+    },
+    {
+      "id": "rnb_slowjam_78_dmin",
+      "filename": "rnb_slowjam_78bpm_dmin.mp3",
+      "genre": "rnb",
+      "bpmExpected": 78,
+      "keyExpected": "Dmin",
+      "tags": ["slow", "vocal-led", "ambient-sections"],
+      "useCases": ["low-energy-sections", "section-tagging", "loudness-evaluation"],
+      "difficulty": "medium"
+    }
+  ]
+}

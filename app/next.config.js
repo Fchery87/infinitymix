@@ -31,6 +31,9 @@ const csp = [
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Resolve lockfile warning for monorepo
+  outputFileTracingRoot: path.join(__dirname, '../../'),
+  
   // Production optimizations
   poweredByHeader: false,
   

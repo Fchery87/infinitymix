@@ -1,4 +1,4 @@
-import { Worker, Job } from 'bullmq'
+import { Worker, Job, Queue } from 'bullmq'
 import { Redis } from 'ioredis'
 import { MashupPlanner } from './MashupPlanner'
 import { logger } from './utils/logger'
@@ -9,6 +9,7 @@ interface MashupGenerationJobData {
   trackIds: string[]
   duration: number
   userId: string
+  plannerDebugTrace?: boolean
 }
 
 class WorkerService {
@@ -60,7 +61,7 @@ class WorkerService {
   }
 
   private async processMashupGenerationJob(job: Job<MashupGenerationJobData>) {
-    const { mashupId, trackIds, duration, userId } = job.data
+    const { mashupId, trackIds, duration, userId, plannerDebugTrace } = job.data
     
     logger.info('Processing mashup generation job', {
       job: job.id,
@@ -82,7 +83,8 @@ class WorkerService {
         tracks,
         targetDuration: duration,
         userId,
-        mashupId
+        mashupId,
+        plannerDebugTrace
       })
 
       // Step 4: Save timeline plan and update master parameters
@@ -159,7 +161,7 @@ class WorkerService {
         throw new Error(`Mashup ${mashupId} not found`)
       }
 
-      const tracks = mashup.inputTracks.map(mt => ({
+      const tracks = mashup.inputTracks.map((mt: any) => ({
         id: mt.uploadedTrack.id,
         fileName: mt.uploadedTrack.fileName,
         storageUrl: mt.uploadedTrack.storageUrl!,
@@ -298,18 +300,17 @@ class WorkerService {
    */
   async getQueueStats() {
     try {
-      const [waiting, active, completed, failed] = await Promise.all([
-        this.worker.getWaiting(),
-        this.worker.getActive(),
-        this.worker.getCompleted(),
-        this.worker.getFailed()
-      ])
+      const queue = new Queue<MashupGenerationJobData>('mashup-generation', {
+        connection: this.connection
+      })
+      const counts = await queue.getJobCounts('waiting', 'active', 'completed', 'failed')
+      await queue.close()
 
       return {
-        waiting: waiting.length,
-        active: active.length,
-        completed: completed.length,
-        failed: failed.length
+        waiting: counts.waiting ?? 0,
+        active: counts.active ?? 0,
+        completed: counts.completed ?? 0,
+        failed: counts.failed ?? 0
       }
     } catch (error) {
       logger.error('Error getting worker stats:', error)

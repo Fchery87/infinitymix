@@ -30,7 +30,26 @@ export async function GET(request: NextRequest) {
       .filter((t) => t.id !== anchor.id)
       .map((t) => {
         const candidateBpm = t.bpm ? Number(t.bpm) : null;
-        const { score, bpmDiff, keyOk } = overallCompatibility(anchorBpm, anchorCamelot, { bpm: candidateBpm, camelotKey: t.camelotKey ?? t.keySignature });
+        const { score, bpmDiff, keyOk } = overallCompatibility(
+          anchorBpm,
+          anchorCamelot,
+          {
+            bpm: candidateBpm,
+            camelotKey: t.camelotKey ?? t.keySignature,
+            beatGrid: t.beatGrid ?? undefined,
+            waveformLite: t.waveformLite ?? undefined,
+            bpmConfidence: t.bpmConfidence != null ? Number(t.bpmConfidence) : null,
+            keyConfidence: t.keyConfidence != null ? Number(t.keyConfidence) : null,
+            analysisFeatures: t.analysisFeatures ?? null,
+          },
+          {
+            beatGrid: anchor.beatGrid ?? undefined,
+            waveformLite: anchor.waveformLite ?? undefined,
+            bpmConfidence: anchor.bpmConfidence != null ? Number(anchor.bpmConfidence) : null,
+            keyConfidence: anchor.keyConfidence != null ? Number(anchor.keyConfidence) : null,
+            analysisFeatures: anchor.analysisFeatures ?? null,
+          }
+        );
         const phraseBoost = Array.isArray(t.dropMoments) && t.dropMoments.length > 0 ? 0.05 : 0;
         const structureBoost = Array.isArray(t.structure) && t.structure.some((s) => s.label === 'chorus') ? 0.05 : 0;
         return { track: t, score: Number((score + phraseBoost + structureBoost).toFixed(3)), bpmDiff, keyOk };

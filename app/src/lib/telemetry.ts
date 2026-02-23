@@ -7,6 +7,7 @@ type TelemetryEvent = {
   name: string;
   level?: TelemetryLevel;
   properties?: Record<string, unknown>;
+  measurements?: Record<string, number>;
 };
 
 export const logTelemetry = ({ name, level = 'info', properties }: TelemetryEvent) => {

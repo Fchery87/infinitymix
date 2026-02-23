@@ -362,7 +362,7 @@ export async function mixStemsPerTrack(
 
     // Loudness normalization
     if (config.processing.loudnessNormalization === 'ebu_r128') {
-      finalFilters.push(buildLoudnessNormalization(config.processing.targetLoudness));
+      finalFilters.push(buildLoudnessNormalization(config.processing.targetLoudness ?? -23));
     }
 
     // Final limiter
@@ -451,7 +451,7 @@ export async function mixStemsPerTrack(
       },
     });
 
-    log('info', 'stemMixing.completed', metrics);
+    log('info', 'stemMixing.completed', metrics as unknown as Record<string, unknown>);
 
     return { buffer: result, metrics };
   } finally {

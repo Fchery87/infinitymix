@@ -1,0 +1,132 @@
+{
+    "id": "default-planner-rule-pack",
+    "version": "1.0.0",
+    "rules": [
+        {
+            "id": "classify.vocal",
+            "description": "Tracks with vocals and non-instrumental content should be treated as vocal overlays",
+            "when": [
+                { "fact": "step", "op": "eq", "value": "classify_track" },
+                { "fact": "track.hasVocals", "op": "truthy" },
+                { "fact": "track.isInstrumental", "op": "falsy" }
+            ],
+            "actions": [{ "type": "set", "field": "classification", "value": "vocal" }]
+        },
+        {
+            "id": "classify.backbone.instrumental_fast",
+            "description": "Instrumental tracks at or above 100 BPM are backbone candidates",
+            "when": [
+                { "fact": "step", "op": "eq", "value": "classify_track" },
+                { "fact": "track.isInstrumental", "op": "truthy" },
+                { "fact": "track.detectedBpm", "op": "gte", "value": 100 }
+            ],
+            "actions": [{ "type": "set", "field": "classification", "value": "backbone" }]
+        },
+        {
+            "id": "classify.bridge.instrumental_fallback",
+            "description": "Instrumental tracks below backbone threshold become bridges",
+            "when": [
+                { "fact": "step", "op": "eq", "value": "classify_track" },
+                { "fact": "track.isInstrumental", "op": "truthy" }
+            ],
+            "actions": [{ "type": "set", "field": "classification", "value": "bridge" }]
+        },
+        {
+            "id": "classify.outro.default",
+            "description": "Fallback classification for tracks without stronger signals",
+            "when": [
+                { "fact": "step", "op": "eq", "value": "classify_track" },
+                { "fact": "classification", "op": "falsy" }
+            ],
+            "actions": [{ "type": "set", "field": "classification", "value": "outro" }]
+        },
+        {
+            "id": "segment.intro.defaults",
+            "description": "Apply intro gain and fade defaults",
+            "when": [
+                { "fact": "step", "op": "eq", "value": "segment_policy" },
+                { "fact": "phase", "op": "eq", "value": "intro" }
+            ],
+            "actions": [
+                { "type": "set", "field": "gain", "value": 0.7 },
+                { "type": "set", "field": "fadeIn", "value": 3 }
+            ]
+        },
+        {
+            "id": "segment.main.first_backbone.fadein",
+            "description": "First main backbone segment gets a gentler fade-in",
+            "when": [
+                { "fact": "step", "op": "eq", "value": "segment_policy" },
+                { "fact": "phase", "op": "eq", "value": "main" },
+                { "fact": "segmentIndex", "op": "eq", "value": 0 }
+            ],
+            "actions": [{ "type": "set", "field": "fadeIn", "value": 2 }]
+        },
+        {
+            "id": "segment.main.overlay.backbone_gain",
+            "description": "Duck backbone slightly when a vocal overlay is present",
+            "when": [
+                { "fact": "step", "op": "eq", "value": "segment_policy" },
+                { "fact": "phase", "op": "eq", "value": "main" },
+                { "fact": "hasVocalOverlay", "op": "truthy" }
+            ],
+            "actions": [{ "type": "set", "field": "gain", "value": 0.6 }]
+        },
+        {
+            "id": "segment.main.no_overlay.backbone_gain",
+            "description": "Use fuller backbone level when no vocal overlay is present",
+            "when": [
+                { "fact": "step", "op": "eq", "value": "segment_policy" },
+                { "fact": "phase", "op": "eq", "value": "main" },
+                { "fact": "hasVocalOverlay", "op": "falsy" }
+            ],
+            "actions": [{ "type": "set", "field": "gain", "value": 0.8 }]
+        },
+        {
+            "id": "segment.main.last_backbone.fadeout",
+            "description": "Last backbone segment fades into outro",
+            "when": [
+                { "fact": "step", "op": "eq", "value": "segment_policy" },
+                { "fact": "phase", "op": "eq", "value": "main" },
+                { "fact": "isLastBackbone", "op": "truthy" }
+            ],
+            "actions": [{ "type": "set", "field": "fadeOut", "value": 3 }]
+        },
+        {
+            "id": "segment.main.default_fadeout",
+            "description": "Intermediate backbone segments use short fade-outs",
+            "when": [
+                { "fact": "step", "op": "eq", "value": "segment_policy" },
+                { "fact": "phase", "op": "eq", "value": "main" },
+                { "fact": "isLastBackbone", "op": "falsy" }
+            ],
+            "actions": [{ "type": "set", "field": "fadeOut", "value": 1 }]
+        },
+        {
+            "id": "segment.vocal.overlay.defaults",
+            "description": "Vocal overlays get compact fades and higher foreground gain",
+            "when": [
+                { "fact": "step", "op": "eq", "value": "segment_policy" },
+                { "fact": "phase", "op": "eq", "value": "main" },
+                { "fact": "segmentKind", "op": "eq", "value": "vocal_overlay" }
+            ],
+            "actions": [
+                { "type": "set", "field": "fadeIn", "value": 1 },
+                { "type": "set", "field": "fadeOut", "value": 1 },
+                { "type": "set", "field": "gain", "value": 0.8 }
+            ]
+        },
+        {
+            "id": "segment.outro.defaults",
+            "description": "Outro segments should fade longer and lower in level",
+            "when": [
+                { "fact": "step", "op": "eq", "value": "segment_policy" },
+                { "fact": "phase", "op": "eq", "value": "outro" }
+            ],
+            "actions": [
+                { "type": "set", "field": "fadeOut", "value": 5 },
+                { "type": "set", "field": "gain", "value": 0.5 }
+            ]
+        }
+    ]
+}

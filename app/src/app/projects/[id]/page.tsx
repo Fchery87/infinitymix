@@ -45,7 +45,7 @@ const statusLabels = {
 export default function ProjectWorkspacePage() {
   const params = useParams();
   const router = useRouter();
-  const projectId = params.id as string;
+  const projectId = (params?.id as string) ?? '';
 
   const [project, setProject] = useState<Project | null>(null);
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -154,7 +154,7 @@ export default function ProjectWorkspacePage() {
               {error || 'Project not found'}
             </h2>
             <p className="mb-8 text-gray-400">
-              The project you're looking for doesn't exist or you don't have access to it.
+              The project you&apos;re looking for doesn&apos;t exist or you don&apos;t have access to it.
             </p>
             <Link
               href="/projects"

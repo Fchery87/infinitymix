@@ -199,6 +199,42 @@ export const uploadedTracks = pgTable('uploaded_tracks', {
   camelotKey: varchar('camelot_key', { length: 10 }),
   bpmConfidence: decimal('bpm_confidence', { precision: 4, scale: 3 }),
   keyConfidence: decimal('key_confidence', { precision: 4, scale: 3 }),
+  browserAnalysisConfidence: decimal('browser_analysis_confidence', {
+    precision: 4,
+    scale: 3,
+  }),
+  browserHintDecisionReason: varchar('browser_hint_decision_reason', {
+    length: 64,
+  }),
+  analysisFeatures: jsonb('analysis_features').$type<{
+    version: 'mir-v1';
+    source: 'essentia' | 'meyda' | 'hybrid';
+    extractionMs?: number | null;
+    sectionTagging?: {
+      enabled: boolean;
+      attempted: boolean;
+      backend: 'webgpu' | 'wasm' | 'heuristic' | 'none';
+      status: 'success' | 'fallback' | 'disabled' | 'unavailable';
+      model?: string | null;
+      error?: string | null;
+      tags: Array<{
+        start: number;
+        end: number;
+        tag: 'vocal-dominant' | 'percussive' | 'build' | 'drop-like' | 'ambient';
+        confidence: number;
+        source: 'ml' | 'heuristic';
+      }>;
+    };
+    descriptors: {
+      rms?: number | null;
+      energy?: number | null;
+      zcr?: number | null;
+      spectralCentroid?: number | null;
+      spectralRolloff?: number | null;
+      flatnessDb?: number | null;
+      crest?: number | null;
+    };
+  }>(),
   beatGrid: jsonb('beat_grid').$type<number[]>(),
   structure:
     jsonb('structure').$type<
@@ -252,6 +288,24 @@ export const trackStems = pgTable(
       table.stemType
     ),
     trackIdIdx: index('idx_track_stems_track_id').on(table.uploadedTrackId),
+  })
+);
+
+export const adminAuditLogs = pgTable(
+  'admin_audit_logs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    adminUserId: text('admin_user_id'),
+    adminUserEmail: varchar('admin_user_email', { length: 255 }),
+    action: varchar('action', { length: 64 }).notNull(),
+    resourceType: varchar('resource_type', { length: 64 }).notNull(),
+    resourceIds: jsonb('resource_ids').$type<string[]>().notNull().default([]),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>(),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    actionIdx: index('idx_admin_audit_logs_action').on(table.action),
+    createdAtIdx: index('idx_admin_audit_logs_created_at').on(table.createdAt),
   })
 );
 
@@ -477,6 +531,8 @@ export type Project = typeof projects.$inferSelect;
 export type NewProject = typeof projects.$inferInsert;
 export type UploadedTrack = typeof uploadedTracks.$inferSelect;
 export type NewUploadedTrack = typeof uploadedTracks.$inferInsert;
+export type AdminAuditLog = typeof adminAuditLogs.$inferSelect;
+export type NewAdminAuditLog = typeof adminAuditLogs.$inferInsert;
 export type Mashup = typeof mashups.$inferSelect;
 export type NewMashup = typeof mashups.$inferInsert;
 export type Feedback = typeof feedback.$inferSelect;

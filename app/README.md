@@ -7,7 +7,8 @@ An AI-powered web application that democratizes mashup creation by allowing user
 ### Audio Analysis
 - **BPM & Key Detection**: Automatic tempo and musical key analysis with Camelot wheel notation
 - **Beat Grid Analysis**: Precise beat mapping for accurate mixing
-- **Structure Detection**: Automatic identification of intro, verse, chorus, breakdown, drop, and outro sections
+- **Structure Detection**: Automatic identification of intro, verse, chorus, breakdown, drop, and outro sections with ML-based section tagging
+- **Section Tags**: Visual labels for vocal-dominant, percussive, build, drop-like, and ambient sections
 - **Cue Point Detection**: Intelligent mix-in/mix-out point suggestions
 - **Energy Profiling**: Track energy curve analysis for smart sequencing
 
@@ -25,15 +26,18 @@ An AI-powered web application that democratizes mashup creation by allowing user
 - **Intelligent Mix-In Points**: Skip intros, enter at buildups/drops based on context
 - **Stem-Based Transitions**: Vocal overlay, bass swap, instrumental bridge techniques
 - **Vocal Collision Detection**: Automatic detection and avoidance of clashing vocals
+- **Rule-Based Planner**: Extensible rule packs for style registry with decision traces
 
 ### Stem Mashups
 - **Vocal + Instrumental Blending**: Mix vocals from one track with instrumental from another
 - **Key Matching**: Automatic pitch adjustment for harmonic compatibility
 - **BPM Sync**: Time-stretch tracks to match target tempo
 - **Beat Alignment**: Sync downbeats between tracks
+- **Two-Pass Loudnorm**: FFmpeg loudness normalization with QA verification and retry policy
 
 ### User Experience
 - **Drag & Drop Upload**: Easy audio file upload
+- **Resumable Uploads**: Large file uploads resume on network interruption
 - **Real-time Progress**: Live status updates during analysis and generation
 - **Mashup History**: Browse, play, and manage created mashups
 - **Download Support**: Export mashups in MP3 format
@@ -47,6 +51,8 @@ An AI-powered web application that democratizes mashup creation by allowing user
 - **Authentication**: Better Auth with session-based auth
 - **Audio Processing**: FFmpeg + fluent-ffmpeg
 - **Stem Separation**: HuggingFace Gradio Client + Demucs
+- **Rule Engine**: json-rules-engine for extensible planning logic
+- **Resumable Uploads**: tus-js-client for large file uploads
 - **State Management**: TanStack Query for server state
 - **Validation**: Zod + React Hook Form
 - **Deployment**: Vercel + Cloudflare R2
@@ -113,6 +119,7 @@ app/
 │   │   └── layout.tsx           # Root layout
 │   ├── components/
 │   │   ├── ui/                  # Reusable UI components
+│   │   ├── track-list/          # Track list with section tags
 │   │   ├── stem-player/         # Stem playback component
 │   │   └── forms/               # Form components
 │   └── lib/
@@ -121,6 +128,8 @@ app/
 │       │   ├── stems-service.ts       # Stem separation
 │       │   ├── mixing-service.ts      # Mashup mixing
 │       │   ├── auto-dj-service.ts     # Auto DJ system
+│       │   ├── resumable-upload.ts    # tus-js-client wrapper
+│       │   ├── preview-graph.ts       # Tone.js preview
 │       │   └── huggingface-stems.ts   # HuggingFace integration
 │       ├── auth/                # Authentication
 │       ├── db/                  # Database (Drizzle ORM)
@@ -128,6 +137,11 @@ app/
 │       ├── storage.ts           # Cloudflare R2 storage
 │       └── utils/
 │           └── audio-compat.ts  # Camelot wheel, BPM matching
+├── services/
+│   ├── renderer/                # FFmpeg rendering service
+│   │   └── src/loudnorm.ts      # Two-pass loudness normalization
+│   └── worker/                  # Planning/queue worker
+│       └── src/planning/rules/  # Rule packs (energy, phrase, genre)
 ├── .drizzle/                    # Database migrations
 ├── drizzle.config.ts
 └── package.json
@@ -283,12 +297,20 @@ npm test                 # Run tests
 - ✅ User authentication (signup, signin, signout, account deletion)
 - ✅ Audio file upload with automatic analysis
 - ✅ BPM, key, beat grid, structure detection
-- ✅ Stem separation (HuggingFace + FFmpeg fallback)
+- ✅ ML-based section tagging (vocal-dominant, percussive, build, drop-like, ambient)
+- ✅ Visual section tags in track list UI
+- ✅ Stem separation (HuggingFace + Demucs + FFmpeg fallback)
 - ✅ Standard mashup generation
 - ✅ Stem-based mashups (vocals + instrumental)
 - ✅ Auto DJ system with professional mixing features
 - ✅ Intelligent mix-in point detection
 - ✅ Harmonic mixing with Camelot wheel
+- ✅ Two-pass loudnorm with QA verification and retry policy
+- ✅ Rule-based planner with extensible rule packs
+- ✅ Energy arc rules (rising, steady, wave profiles)
+- ✅ Phrase safety rules for transition boundaries
+- ✅ Genre compatibility rules for transition styles
+- ✅ Resumable uploads with tus-js-client
 - ✅ Cloudflare R2 storage integration
 - ✅ Proper file cleanup on deletion
 

@@ -4,7 +4,9 @@ import { useState } from 'react';
 import { AudioPlayer } from '@/components/audio-player';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Plus, FolderKanban, Music, User } from 'lucide-react';
+import { usePathname } from 'next/navigation';
+import { cn } from '@/lib/utils/helpers';
 
 export default function PlayerPage() {
   // Mock state for demonstration
@@ -57,6 +59,49 @@ export default function PlayerPage() {
               onTogglePlay={() => setIsPlaying(!isPlaying)}
            />
        </div>
+
+       {/* Bottom Navigation */}
+       <PlayerNavigation />
     </div>
+  );
+}
+
+function PlayerNavigation() {
+  const pathname = usePathname();
+  
+  const navItems = [
+    { href: '/create', label: 'Create', icon: Plus },
+    { href: '/projects', label: 'Projects', icon: FolderKanban },
+    { href: '/mashups', label: 'Mashups', icon: Music },
+    { href: '/profile', label: 'Profile', icon: User },
+  ];
+
+  return (
+    <nav className="fixed bottom-0 left-0 right-0 bg-background/80 backdrop-blur-lg border-t border-white/5 z-50">
+      <div className="flex justify-around items-center h-16 max-w-lg mx-auto">
+        {navItems.map((item) => {
+          const isActive = pathname === item.href || (item.href === '/mashups' && pathname === '/player');
+          const Icon = item.icon;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={cn(
+                'flex flex-col items-center justify-center gap-1 px-4 py-2 rounded-lg transition-all duration-200',
+                isActive
+                  ? 'text-primary'
+                  : 'text-gray-400 hover:text-white'
+              )}
+            >
+              <Icon className="w-5 h-5" />
+              <span className="text-xs font-medium">{item.label}</span>
+              {isActive && (
+                <span className="absolute bottom-1 w-1 h-1 bg-primary rounded-full" />
+              )}
+            </Link>
+          );
+        })}
+      </div>
+    </nav>
   );
 }

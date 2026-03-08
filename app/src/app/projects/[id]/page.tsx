@@ -3,11 +3,11 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Project } from '@/lib/db/schema';
-import { ArrowLeft, Settings, Music, Disc3, Layers, Loader2, Upload, Plus, Sparkles, Zap } from 'lucide-react';
+import { ArrowLeft, Settings, Music, Disc3, Layers, Loader2, Upload, Plus, Sparkles } from 'lucide-react';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
 import { formatDistanceToNow } from 'date-fns';
-import { Button } from '@/components/ui/button';
+import { Navigation } from '@/components/navigation';
 
 type Tab = 'tracks' | 'stems' | 'mashups';
 
@@ -183,34 +183,7 @@ export default function ProjectWorkspacePage() {
       <div className="absolute bottom-0 right-0 w-[600px] h-[400px] bg-blue-600/10 rounded-full blur-[100px] opacity-15 pointer-events-none" />
 
       {/* Navbar */}
-      <header className="fixed top-0 w-full z-50 border-b border-white/5 bg-background/60 backdrop-blur-lg">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-20">
-            <Link href="/create">
-              <div className="flex items-center group cursor-pointer">
-                <div className="w-10 h-10 bg-gradient-to-tr from-primary to-orange-600 rounded-xl flex items-center justify-center mr-3 shadow-lg group-hover:shadow-primary/50 transition-all duration-300">
-                  <Zap className="w-6 h-6 text-white fill-white" />
-                </div>
-                <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400 group-hover:to-white transition-all">InfinityMix</h1>
-              </div>
-            </Link>
-            <nav className="flex items-center space-x-6">
-              <Link href="/projects">
-                <Button variant="ghost" className="text-white">Projects</Button>
-              </Link>
-              <Link href="/mashups">
-                <Button variant="ghost" className="text-gray-400 hover:text-white hover:bg-white/5">My Mashups</Button>
-              </Link>
-              <Link href="/profile">
-                <Button variant="ghost" className="text-gray-400 hover:text-white hover:bg-white/5">Profile</Button>
-              </Link>
-              <Link href="/login">
-                <Button variant="outline" className="border-white/10 hover:bg-white/5 hover:text-white">Sign Out</Button>
-              </Link>
-            </nav>
-          </div>
-        </div>
-      </header>
+      <Navigation />
 
       <main className="pt-32 pb-16 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto">
         {/* Header */}

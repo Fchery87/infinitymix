@@ -609,6 +609,17 @@ export async function getTrackInfoForMixing(trackId: string): Promise<{
   if (tracks.length === 0) return null;
   
   const t = tracks[0];
+  
+  // Transform cuePoints array to the expected format
+  const cuePointsArray = t.cuePoints ?? [];
+  const mixIn = cuePointsArray.find(cp => cp.type === 'mix-in')?.position ?? 0;
+  const mixOut = cuePointsArray.find(cp => cp.type === 'mix-out')?.position ?? (t.durationSeconds ? Number(t.durationSeconds) : 0);
+  const drop = cuePointsArray.find(cp => cp.type === 'drop')?.position ?? null;
+  const breakdown = cuePointsArray.find(cp => cp.type === 'breakdown')?.position ?? null;
+  const cueConfidence = cuePointsArray.length > 0 
+    ? cuePointsArray.reduce((sum, cp) => sum + cp.confidence, 0) / cuePointsArray.length 
+    : 0.5;
+  
   return {
     id: t.id,
     bpm: t.bpm ? Number(t.bpm) : null,
@@ -617,6 +628,12 @@ export async function getTrackInfoForMixing(trackId: string): Promise<{
     beatGrid: t.beatGrid ?? null,
     dropMoments: t.dropMoments ?? null,
     structure: t.structure ?? null,
-    cuePoints: t.cuePoints ?? null,
+    cuePoints: {
+      mixIn,
+      mixOut,
+      drop,
+      breakdown,
+      confidence: Number(cueConfidence.toFixed(3)),
+    },
   };
 }

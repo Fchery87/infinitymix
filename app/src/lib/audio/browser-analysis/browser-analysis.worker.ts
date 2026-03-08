@@ -571,7 +571,7 @@ function fuseSectionTagsIntoStructure(
 ) {
   return structure.map((section) => {
     const tag = tags.find((t) => Math.abs(t.start - section.start) < 0.05 && Math.abs(t.end - section.end) < 0.05);
-    if (!tag) return section;
+    if (!tag) return { ...section, provenance: 'browser-heuristic' as const };
 
     let nextLabel = section.label;
     if (tag.tag === 'drop-like') nextLabel = 'chorus';
@@ -582,7 +582,7 @@ function fuseSectionTagsIntoStructure(
     const fusedConfidence = Number(
       clamp01(section.confidence * 0.65 + tag.confidence * 0.35).toFixed(3)
     );
-    return { ...section, label: nextLabel, confidence: fusedConfidence };
+    return { ...section, label: nextLabel, confidence: fusedConfidence, provenance: 'browser-ml' as const };
   });
 }
 

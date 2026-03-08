@@ -9,6 +9,9 @@ import {
   buildPreviewGenerationIdempotencyKey,
   getAutomationRecoveryPolicy,
 } from '@/lib/runtime/recovery';
+import { convertPlannedTransitionsToContracts } from '@/lib/audio/execution';
+import type { TransitionExecutionContract } from '@/lib/audio/types/transition';
+import type { AutoDjTransitionStyle } from '@/lib/audio/auto-dj-service';
 
 const MAX_DURATION = 30;
 
@@ -32,15 +35,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Content-Type must be application/json' }, { status: 415 });
     }
 
-    const { trackIds, durationSeconds, contract, mixMode = 'standard' } = await request.json();
-    if (!Array.isArray(trackIds) || trackIds.length < 2) {
+    const { trackIds, durationSeconds, contract, plan, planId, mixMode = 'standard' } = await request.json();
+    
+    // Handle planId parameter - fetch plan and convert to contracts
+    let effectiveContract: TransitionExecutionContract | undefined = contract;
+    let effectiveTrackIds: string[] = trackIds;
+    
+    if (planId && !contract) {
+      // Fetch plan from database (implementation depends on how plans are stored)
+      // For now, we'll use the plan parameter if provided
+      if (plan) {
+        effectiveTrackIds = plan.trackIds;
+        if (plan.transitions && plan.transitions.length > 0) {
+          const contracts = convertPlannedTransitionsToContracts(plan.transitions);
+          effectiveContract = contracts[0]; // Use first transition for now
+        }
+      }
+    }
+    
+    if (!Array.isArray(effectiveTrackIds) || effectiveTrackIds.length < 2) {
       return NextResponse.json({ error: 'At least 2 trackIds required' }, { status: 400 });
     }
 
-    const safeDuration = contract ? contract.overlapDurationSeconds + 2 : Math.min(MAX_DURATION, Math.max(10, Number(durationSeconds) || 20));
+    const safeDuration = effectiveContract ? effectiveContract.overlapDurationSeconds + 2 : Math.min(MAX_DURATION, Math.max(10, Number(durationSeconds) || 20));
     const previewIdempotencyKey = buildPreviewGenerationIdempotencyKey({
       userId: user.id,
-      trackIds,
+      trackIds: effectiveTrackIds,
       durationSeconds: safeDuration,
       mixMode,
     });
@@ -49,14 +69,14 @@ export async function POST(request: NextRequest) {
     const records = await db
       .select({ id: uploadedTracks.id, storageUrl: uploadedTracks.storageUrl, mimeType: uploadedTracks.mimeType, userId: uploadedTracks.userId, bpm: uploadedTracks.bpm })
       .from(uploadedTracks)
-      .where(and(eq(uploadedTracks.userId, user.id), inArray(uploadedTracks.id, trackIds)));
+      .where(and(eq(uploadedTracks.userId, user.id), inArray(uploadedTracks.id, effectiveTrackIds)));
 
-    if (records.length !== trackIds.length) {
+    if (records.length !== effectiveTrackIds.length) {
       return NextResponse.json({ error: 'One or more tracks not found' }, { status: 404 });
     }
 
-    // Reorder records to match trackIds
-    const orderedRecords = trackIds.map((id) => records.find((r) => r.id === id)!);
+    // Reorder records to match effectiveTrackIds
+    const orderedRecords = effectiveTrackIds.map((id: string) => records.find((r) => r.id === id)!);
 
     const storage = await getStorage();
     if (!storage.getFile) return NextResponse.json({ error: 'Storage driver cannot read files' }, { status: 500 });
@@ -72,19 +92,19 @@ export async function POST(request: NextRequest) {
 
     let mixingConfig: Parameters<typeof mixToBuffer>[1] = { duration: safeDuration };
 
-    if (contract) {
+    if (effectiveContract) {
       mixingConfig = {
         duration: safeDuration,
         inputConfigs: [
-          { startSeconds: Math.max(0, contract.mixOutCueSeconds - 1) },
-          { startSeconds: contract.mixInCueSeconds },
+          { startSeconds: Math.max(0, effectiveContract.mixOutCueSeconds - 1) },
+          { startSeconds: effectiveContract.mixInCueSeconds },
         ],
         transitions: [
           {
             fromIdx: 0,
             toIdx: 1,
-            duration: contract.overlapDurationSeconds,
-            style: contract.transitionStyle || 'smooth',
+            duration: effectiveContract.overlapDurationSeconds,
+            style: (effectiveContract.transitionStyle as AutoDjTransitionStyle) || 'smooth',
           },
         ],
       };

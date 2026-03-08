@@ -23,7 +23,7 @@ function makeHint(overrides: Partial<BrowserAnalysisHint> = {}): BrowserAnalysis
     sectionConfidence: 0.7,
     beatGrid: [0, 0.5, 1, 1.5],
     phrases: [{ start: 0, end: 8, energy: 0.6 }],
-    structure: [{ label: 'intro', start: 0, end: 16, confidence: 0.8 }],
+    structure: [{ label: 'intro', start: 0, end: 16, confidence: 0.8, provenance: 'browser-heuristic' }],
     dropMoments: [32],
     waveformLite: [0.1, 0.2, 0.3],
     confidence: {

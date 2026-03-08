@@ -381,6 +381,137 @@ export const automationJobs = pgTable(
   })
 );
 
+// Planner traces table for Phase 3 observability
+export const plannerTraces = pgTable(
+  'planner_traces',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    traceId: varchar('trace_id', { length: 64 }).notNull().unique(),
+    planId: varchar('plan_id', { length: 64 }).notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    trackIds: jsonb('track_ids').$type<string[]>().notNull(),
+    totalPlanningDurationMs: integer('total_planning_duration_ms').notNull(),
+    graphBuildDurationMs: integer('graph_build_duration_ms').notNull().default(0),
+    compatibilityScoringDurationMs: integer('compatibility_scoring_duration_ms').notNull().default(0),
+    sequenceOptimizationDurationMs: integer('sequence_optimization_duration_ms').notNull().default(0),
+    decisions: jsonb('decisions').$type<import('@/lib/audio/types/planner').PlannerTrace['decisions']>().notNull().default([]),
+    rejectedCandidates: jsonb('rejected_candidates').$type<import('@/lib/audio/types/planner').PlannerTrace['rejectedCandidates']>().notNull().default([]),
+    warnings: jsonb('warnings').$type<import('@/lib/audio/types/planner').PlannerTrace['warnings']>().notNull().default([]),
+    constraints: jsonb('constraints').$type<import('@/lib/audio/types/planner').PlanningConstraints>(),
+    policy: jsonb('policy').$type<import('@/lib/audio/types/planner').PlanningPolicy>(),
+    qualityScore: decimal('quality_score', { precision: 4, scale: 3 }),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdIdx: index('idx_planner_traces_user_id').on(table.userId),
+    planIdIdx: index('idx_planner_traces_plan_id').on(table.planId),
+    createdAtIdx: index('idx_planner_traces_created_at').on(table.createdAt),
+  })
+);
+
+// QA Records table for Phase 5 quality enforcement
+export const qaRecords = pgTable(
+  'qa_records',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    jobId: varchar('job_id', { length: 64 }).notNull(),
+    mashupId: uuid('mashup_id').references(() => mashups.id, { onDelete: 'set null' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    results: jsonb('results').$type<import('@/lib/audio/types/qa').AutomationQAResults>().notNull(),
+    passed: boolean('passed').notNull().default(false),
+    retryCount: integer('retry_count').notNull().default(0),
+    retryReasons: jsonb('retry_reasons').$type<string[]>().notNull().default([]),
+    outputProfile: varchar('output_profile', { length: 32 }),
+    reviewedBy: text('reviewed_by').references(() => users.id, { onDelete: 'set null' }),
+    reviewedAt: timestamp('reviewed_at'),
+    reviewNotes: text('review_notes'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    jobIdIdx: index('idx_qa_records_job_id').on(table.jobId),
+    mashupIdIdx: index('idx_qa_records_mashup_id').on(table.mashupId),
+    userIdIdx: index('idx_qa_records_user_id').on(table.userId),
+    passedIdx: index('idx_qa_records_passed').on(table.passed),
+    createdAtIdx: index('idx_qa_records_created_at').on(table.createdAt),
+  })
+);
+
+// Phase 7: Experiment system tables
+export const experimentDefinitions = pgTable(
+  'experiment_definitions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: varchar('name', { length: 128 }).notNull().unique(),
+    domain: varchar('domain', { length: 32 }).notNull(), // 'analysis', 'planner', etc.
+    description: text('description').notNull(),
+    hypothesis: text('hypothesis'),
+    status: varchar('status', { length: 32 }).notNull().default('draft'),
+    startDate: timestamp('start_date').notNull(),
+    endDate: timestamp('end_date'),
+    trafficAllocation: integer('traffic_allocation').notNull().default(100),
+    controlVariantId: uuid('control_variant_id').notNull(),
+    autoRollbackEnabled: boolean('auto_rollback_enabled').notNull().default(true),
+    rollbackThresholds: jsonb('rollback_thresholds'),
+    createdBy: text('created_by').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    nameIdx: index('idx_exp_def_name').on(table.name),
+    domainIdx: index('idx_exp_def_domain').on(table.domain),
+    statusIdx: index('idx_exp_def_status').on(table.status),
+    createdAtIdx: index('idx_exp_def_created_at').on(table.createdAt),
+  })
+);
+
+export const experimentVariants = pgTable(
+  'experiment_variants',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    experimentId: uuid('experiment_id')
+      .notNull()
+      .references(() => experimentDefinitions.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 64 }).notNull(),
+    description: text('description'),
+    codePath: varchar('code_path', { length: 128 }).notNull(),
+    trafficPercentage: integer('traffic_percentage').notNull(),
+    configOverrides: jsonb('config_overrides').notNull().default({}),
+    isControl: boolean('is_control').notNull().default(false),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    experimentIdx: index('idx_exp_var_exp_id').on(table.experimentId),
+    nameIdx: uniqueIndex('idx_exp_var_name_exp').on(table.experimentId, table.name),
+  })
+);
+
+export const experimentAssignments = pgTable(
+  'experiment_assignments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    experimentId: uuid('experiment_id')
+      .notNull()
+      .references(() => experimentDefinitions.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    variantId: uuid('variant_id')
+      .notNull()
+      .references(() => experimentVariants.id, { onDelete: 'cascade' }),
+    assignedAt: timestamp('assigned_at').notNull().defaultNow(),
+    context: jsonb('context').notNull().default({}),
+  },
+  (table) => ({
+    expUserIdx: uniqueIndex('idx_exp_assign_exp_user').on(table.experimentId, table.userId),
+    userIdx: index('idx_exp_assign_user').on(table.userId),
+    variantIdx: index('idx_exp_assign_variant').on(table.variantId),
+  })
+);
+
 // Mashups table
 export const mashups = pgTable(
   'mashups',
@@ -627,3 +758,15 @@ export type Recommendation = typeof recommendations.$inferSelect;
 export type NewRecommendation = typeof recommendations.$inferInsert;
 export type PlaybackSurvey = typeof playbackSurveys.$inferSelect;
 export type NewPlaybackSurvey = typeof playbackSurveys.$inferInsert;
+export type PlannerTrace = typeof plannerTraces.$inferSelect;
+export type NewPlannerTrace = typeof plannerTraces.$inferInsert;
+
+export type QARecord = typeof qaRecords.$inferSelect;
+export type NewQARecord = typeof qaRecords.$inferInsert;
+
+export type ExperimentDefinition = typeof experimentDefinitions.$inferSelect;
+export type NewExperimentDefinition = typeof experimentDefinitions.$inferInsert;
+export type ExperimentVariant = typeof experimentVariants.$inferSelect;
+export type NewExperimentVariant = typeof experimentVariants.$inferInsert;
+export type ExperimentAssignment = typeof experimentAssignments.$inferSelect;
+export type NewExperimentAssignment = typeof experimentAssignments.$inferInsert;

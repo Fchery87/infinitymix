@@ -1,4 +1,5 @@
 import type { PreviewTransitionStyle } from '@/lib/audio/preview-graph';
+import type { TransitionExecutionContract } from '@/lib/audio/types/transition';
 
 export type PreviewRenderAuthority = 'render-authoritative' | 'preview-only';
 
@@ -356,4 +357,162 @@ export const PREVIEW_RENDER_PARITY: Record<PreviewTransitionStyle, PreviewRender
 
 export function listPreviewRenderParity(): PreviewRenderParityEntry[] {
   return Object.values(PREVIEW_RENDER_PARITY);
+}
+
+// ============================================================================
+// Phase 4: Transition Execution Contract Mappings
+// ============================================================================
+
+/**
+ * Maps TransitionExecutionContract fields to preview and render behavior.
+ * 
+ * This documentation explains how the shared contract drives both preview
+ * and render, clarifying which behaviors are preview-only vs render-authoritative.
+ */
+
+export type ContractFieldAuthority = {
+  field: keyof TransitionExecutionContract;
+  previewBehavior: string;
+  renderBehavior: string;
+  authority: 'preview-only' | 'render-authoritative' | 'shared';
+  notes: string;
+};
+
+export const CONTRACT_FIELD_MAPPINGS: ContractFieldAuthority[] = [
+  {
+    field: 'trackAId',
+    previewBehavior: 'Load track A audio into Tone.js player',
+    renderBehavior: 'Load track A audio into FFmpeg input',
+    authority: 'shared',
+    notes: 'Both use the same track ID from the contract.',
+  },
+  {
+    field: 'trackBId',
+    previewBehavior: 'Load track B audio into Tone.js player',
+    renderBehavior: 'Load track B audio into FFmpeg input',
+    authority: 'shared',
+    notes: 'Both use the same track ID from the contract.',
+  },
+  {
+    field: 'trackARole',
+    previewBehavior: 'Determines if track A plays as vocal, instrumental, or full mix',
+    renderBehavior: 'Determines stem selection for track A (if stems available)',
+    authority: 'shared',
+    notes: 'Role affects both preview and render track selection.',
+  },
+  {
+    field: 'trackBRole',
+    previewBehavior: 'Determines if track B plays as vocal, instrumental, or full mix',
+    renderBehavior: 'Determines stem selection for track B (if stems available)',
+    authority: 'shared',
+    notes: 'Role affects both preview and render track selection.',
+  },
+  {
+    field: 'mixOutCueSeconds',
+    previewBehavior: 'Start crossfade from this position in track A',
+    renderBehavior: 'Start transition from this position in track A',
+    authority: 'shared',
+    notes: 'Critical timing parameter - must match exactly.',
+  },
+  {
+    field: 'mixInCueSeconds',
+    previewBehavior: 'Start track B from this position',
+    renderBehavior: 'Start track B from this position',
+    authority: 'shared',
+    notes: 'Critical timing parameter - must match exactly.',
+  },
+  {
+    field: 'overlapDurationSeconds',
+    previewBehavior: 'Duration of crossfade in seconds',
+    renderBehavior: 'Duration of transition fade in seconds',
+    authority: 'shared',
+    notes: 'Preview and render should use the same duration.',
+  },
+  {
+    field: 'tempoRampStrategy',
+    previewBehavior: 'Adjust Tone.js playback rate (approximate)',
+    renderBehavior: 'Apply FFmpeg rubberband or atempo filter',
+    authority: 'render-authoritative',
+    notes: 'Preview tempo ramp is approximate; render is precise.',
+  },
+  {
+    field: 'targetBpm',
+    previewBehavior: 'Target playback rate for preview',
+    renderBehavior: 'Target tempo for time-stretching',
+    authority: 'render-authoritative',
+    notes: 'Preview may not apply exact tempo; render is precise.',
+  },
+  {
+    field: 'trackAEqIntent',
+    previewBehavior: 'Apply Tone.js EQ/filter (approximate)',
+    renderBehavior: 'Apply FFmpeg audio filters (precise)',
+    authority: 'render-authoritative',
+    notes: 'Preview EQ indicates intent; render applies actual filters.',
+  },
+  {
+    field: 'trackBEqIntent',
+    previewBehavior: 'Apply Tone.js EQ/filter (approximate)',
+    renderBehavior: 'Apply FFmpeg audio filters (precise)',
+    authority: 'render-authoritative',
+    notes: 'Preview EQ indicates intent; render applies actual filters.',
+  },
+  {
+    field: 'transitionStyle',
+    previewBehavior: 'Select preview preset (crossfade curve, FX)',
+    renderBehavior: 'Select render preset (fade curves, processing)',
+    authority: 'shared',
+    notes: 'Both use the same style identifier from the contract.',
+  },
+];
+
+/**
+ * Get authority classification for a specific contract field
+ */
+export function getContractFieldAuthority(
+  field: keyof TransitionExecutionContract
+): ContractFieldAuthority | undefined {
+  return CONTRACT_FIELD_MAPPINGS.find((m) => m.field === field);
+}
+
+/**
+ * Validate that a contract is suitable for both preview and render
+ */
+export function validateContractParity(
+  contract: TransitionExecutionContract
+): { valid: boolean; issues: string[] } {
+  const issues: string[] = [];
+
+  // Critical fields must be present
+  const criticalFields: (keyof TransitionExecutionContract)[] = [
+    'trackAId',
+    'trackBId',
+    'mixOutCueSeconds',
+    'mixInCueSeconds',
+    'overlapDurationSeconds',
+    'transitionStyle',
+  ];
+
+  for (const field of criticalFields) {
+    if (contract[field] === undefined || contract[field] === null) {
+      issues.push(`Missing critical field: ${field}`);
+    }
+  }
+
+  // Validate timing
+  if (contract.mixOutCueSeconds !== undefined && contract.mixOutCueSeconds < 0) {
+    issues.push('mixOutCueSeconds cannot be negative');
+  }
+
+  if (contract.mixInCueSeconds !== undefined && contract.mixInCueSeconds < 0) {
+    issues.push('mixInCueSeconds cannot be negative');
+  }
+
+  if (contract.overlapDurationSeconds <= 0) {
+    issues.push('overlapDurationSeconds must be positive');
+  }
+
+  return {
+    valid: issues.length === 0,
+    issues,
+  };
 }

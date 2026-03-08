@@ -30,6 +30,13 @@ import {
 } from '@/lib/audio/preview-graph';
 import { emitAudioPipelineTelemetry } from '@/lib/audio/telemetry';
 import { recordPreviewQaTelemetry } from '@/lib/audio/preview-qa-telemetry';
+import {
+  EventTypeSelector,
+  EnergySlider,
+  ExpertModeToggle,
+  RecommendationRationale,
+} from '@/components/create';
+import type { EventArchetype, PlannedTransition } from '@/lib/audio/types/planner';
 
 type TransitionStyle =
   | 'smooth'
@@ -144,7 +151,10 @@ export default function CreatePage() {
   const [autoDjTargetBpm, setAutoDjTargetBpm] = useState<number | null>(null);
   const [preferStems, setPreferStems] = useState(true);
   const [keepOrder, setKeepOrder] = useState(false);
-  const [eventType, setEventType] = useState<'wedding' | 'birthday' | 'sweet16' | 'club' | 'default'>('default');
+  const [eventType, setEventType] = useState<EventArchetype>('party-peak');
+  const [isExpertMode, setIsExpertMode] = useState(false);
+  const [energyLevel, setEnergyLevel] = useState(75);
+  const [plannedTransitions, setPlannedTransitions] = useState<PlannedTransition[]>([]);
   const [beatAlign, setBeatAlign] = useState(true);
   const [beatAlignMode, setBeatAlignMode] = useState<'downbeat' | 'any'>('downbeat');
   const [crossfadeEnabled, setCrossfadeEnabled] = useState(false);
@@ -727,6 +737,15 @@ export default function CreatePage() {
       const durationMap = { '1_minute': 60, '2_minutes': 120, '3_minutes': 180, custom: customDurationSeconds ?? 180 } as const;
       const targetDuration = durationMap[durationPreset as keyof typeof durationMap];
 
+      // Map EventArchetype to legacy event type for API compatibility
+      const eventTypeMap: Record<EventArchetype, string> = {
+        'party-peak': 'club',
+        'warmup-journey': 'birthday',
+        'chill-vibe': 'default',
+        'sunrise-set': 'sweet16',
+        'peak-valley': 'wedding',
+      };
+
       const response = await fetch('/api/mashups/djmix', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -735,10 +754,10 @@ export default function CreatePage() {
           targetDurationSeconds: targetDuration,
           targetBpm: autoDjTargetBpm ?? undefined,
           transitionStyle: autoDjTransitionStyle,
-          energyMode: autoDjEnergyMode,
+          energyMode: energyLevel > 75 ? 'build' : energyLevel > 50 ? 'wave' : 'steady',
           preferStems,
           keepOrder,
-          eventType,
+          eventType: eventTypeMap[eventType],
           stylePackId: selectedStylePackId ?? undefined,
           projectId: selectedProjectId,
         }),
@@ -1387,131 +1406,107 @@ export default function CreatePage() {
               </Card>
             )}
 
-            {/* Auto DJ options */}
+            {/* Auto DJ options - Phase 6: Product Surface */}
             {mixMode === 'auto_dj' && (
               <Card className="bg-card/60 backdrop-blur-xl border-primary/20">
-                <CardContent className="pt-6 space-y-4">
-                  <div className="flex items-center gap-2">
-                    <Zap className="w-4 h-4 text-primary" />
-                    <p className="text-sm font-medium text-white">Auto DJ Setup</p>
+                <CardContent className="pt-6 space-y-6">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Zap className="w-4 h-4 text-primary" />
+                      <p className="text-sm font-medium text-white">Auto DJ Setup</p>
+                    </div>
+                    <ExpertModeToggle 
+                      isExpert={isExpertMode}
+                      onToggle={setIsExpertMode}
+                    />
                   </div>
 
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="flex flex-col gap-1 sm:col-span-2">
-                      <label className="text-xs text-gray-400">Style pack (Phase 3)</label>
-                      <select
-                        value={selectedStylePackId ?? ''}
-                        onChange={(e) => {
-                          const nextId = e.target.value || null;
-                          setSelectedStylePackId(nextId);
-                          const selectedPack = stylePacks.find((pack) => pack.id === nextId);
-                          if (selectedPack) {
-                            setAutoDjEnergyMode(selectedPack.energyProfile);
-                            setAutoDjTransitionStyle(selectedPack.defaultTransitionStyle);
-                          }
-                        }}
-                        className="w-full p-3 rounded-lg bg-black/30 border border-white/10 text-white text-sm focus:border-primary outline-none"
-                      >
-                        <option value="">Manual controls (no style pack)</option>
-                        {stylePacks.map((pack) => (
-                          <option key={pack.id} value={pack.id}>
-                            {pack.name} ({pack.energyProfile}, {pack.defaultTransitionStyle})
-                          </option>
-                        ))}
-                      </select>
-                      {selectedStylePackId && (
-                        <p className="text-xs text-gray-500">
-                          {stylePacks.find((pack) => pack.id === selectedStylePackId)?.description ?? 'Built-in style preset'}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs text-gray-400">Event type</label>
-                      <select
-                        value={eventType}
-                        onChange={(e) => setEventType(e.target.value as typeof eventType)}
-                        className="w-full p-3 rounded-lg bg-black/30 border border-white/10 text-white text-sm focus:border-primary outline-none"
-                      >
-                        <option value="default">Any</option>
-                        <option value="wedding">Wedding</option>
-                        <option value="birthday">Birthday</option>
-                        <option value="sweet16">Sweet 16</option>
-                        <option value="club">Club</option>
-                      </select>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs text-gray-400">Energy arc</label>
-                      <select
-                        value={autoDjEnergyMode}
-                        onChange={(e) => setAutoDjEnergyMode(e.target.value as typeof autoDjEnergyMode)}
-                        className="w-full p-3 rounded-lg bg-black/30 border border-white/10 text-white text-sm focus:border-primary outline-none"
-                      >
-                        <option value="steady">Steady</option>
-                        <option value="build">Build to peak</option>
-                        <option value="wave">Waves</option>
-                      </select>
-                    </div>
+                  {/* Event Type Selector */}
+                  <div className="space-y-3">
+                    <label className="text-xs text-gray-400">What kind of mix do you want?</label>
+                    <EventTypeSelector
+                      value={eventType}
+                      onChange={setEventType}
+                    />
                   </div>
 
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs text-gray-400">Transition style</label>
-                      <select
-                        value={autoDjTransitionStyle}
-                        onChange={(e) => setAutoDjTransitionStyle(e.target.value as TransitionStyle)}
-                        className="w-full p-3 rounded-lg bg-black/30 border border-white/10 text-white text-sm focus:border-primary outline-none"
-                      >
-                        {transitionStyles.length === 0 ? (
-                          <option value="smooth">Smooth</option>
-                        ) : (
-                          transitionStyles.map((style) => (
-                            <option key={style.id} value={style.id}>
-                              {style.name}
-                            </option>
-                          ))
-                        )}
-                      </select>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs text-gray-400">Target BPM (optional)</label>
-                      <input
-                        type="number"
-                        min={60}
-                        max={200}
-                        value={autoDjTargetBpm ?? ''}
-                        onChange={(e) => setAutoDjTargetBpm(e.target.value ? Number(e.target.value) : null)}
-                        className="w-full p-3 rounded-lg bg-black/30 border border-white/10 text-white text-sm focus:border-primary outline-none"
-                        placeholder="e.g. 126"
+                  {/* Energy Slider */}
+                  <div className="space-y-3">
+                    <label className="text-xs text-gray-400">Energy level</label>
+                    <div className="bg-white rounded-xl p-4">
+                      <EnergySlider
+                        value={energyLevel}
+                        onChange={setEnergyLevel}
                       />
                     </div>
                   </div>
 
-                  <div className="flex flex-col gap-2">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={preferStems}
-                        onChange={(e) => setPreferStems(e.target.checked)}
-                        className="h-4 w-4 accent-primary"
-                      />
-                      <div>
-                        <p className="text-sm text-white">Prefer stems for transitions</p>
-                        <p className="text-xs text-gray-500">Uses vocals+instrumental stems when available</p>
+                  {/* Expert Mode Controls */}
+                  {isExpertMode && (
+                    <div className="space-y-4 pt-4 border-t border-white/10">
+                      <p className="text-xs text-gray-400 uppercase tracking-wider">Expert Controls</p>
+                      
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs text-gray-400">Transition style</label>
+                          <select
+                            value={autoDjTransitionStyle}
+                            onChange={(e) => setAutoDjTransitionStyle(e.target.value as TransitionStyle)}
+                            className="w-full p-3 rounded-lg bg-black/30 border border-white/10 text-white text-sm focus:border-primary outline-none"
+                          >
+                            {transitionStyles.length === 0 ? (
+                              <option value="smooth">Smooth</option>
+                            ) : (
+                              transitionStyles.map((style) => (
+                                <option key={style.id} value={style.id}>
+                                  {style.name}
+                                </option>
+                              ))
+                            )}
+                          </select>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs text-gray-400">Target BPM (optional)</label>
+                          <input
+                            type="number"
+                            min={60}
+                            max={200}
+                            value={autoDjTargetBpm ?? ''}
+                            onChange={(e) => setAutoDjTargetBpm(e.target.value ? Number(e.target.value) : null)}
+                            className="w-full p-3 rounded-lg bg-black/30 border border-white/10 text-white text-sm focus:border-primary outline-none"
+                            placeholder="e.g. 126"
+                          />
+                        </div>
                       </div>
-                    </label>
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={keepOrder}
-                        onChange={(e) => setKeepOrder(e.target.checked)}
-                        className="h-4 w-4 accent-primary"
-                      />
-                      <div>
-                        <p className="text-sm text-white">Keep my track order</p>
-                        <p className="text-xs text-gray-500">Otherwise we will reorder for smoother flow</p>
+
+                      <div className="flex flex-col gap-2">
+                        <label className="flex items-center gap-3 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={preferStems}
+                            onChange={(e) => setPreferStems(e.target.checked)}
+                            className="h-4 w-4 accent-primary"
+                          />
+                          <div>
+                            <p className="text-sm text-white">Prefer stems for transitions</p>
+                            <p className="text-xs text-gray-500">Uses vocals+instrumental stems when available</p>
+                          </div>
+                        </label>
+                        <label className="flex items-center gap-3 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={keepOrder}
+                            onChange={(e) => setKeepOrder(e.target.checked)}
+                            className="h-4 w-4 accent-primary"
+                          />
+                          <div>
+                            <p className="text-sm text-white">Keep my track order</p>
+                            <p className="text-xs text-gray-500">Otherwise we will reorder for smoother flow</p>
+                          </div>
+                        </label>
                       </div>
-                    </label>
-                  </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}

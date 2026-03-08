@@ -22,10 +22,10 @@ describe('audio-worker-pool', () => {
 
   describe('module imports', () => {
     it('exports required functions', async () => {
-      const module = await import('@/lib/audio/worker/audio-worker-pool');
-      expect(typeof module.submitAudioJob).toBe('function');
-      expect(typeof module.getQueueStats).toBe('function');
-      expect(typeof module.shutdownWorkers).toBe('function');
+      const workerPool = await import('@/lib/audio/worker/audio-worker-pool');
+      expect(typeof workerPool.submitAudioJob).toBe('function');
+      expect(typeof workerPool.getQueueStats).toBe('function');
+      expect(typeof workerPool.shutdownWorkers).toBe('function');
     });
   });
 
@@ -47,10 +47,10 @@ describe('audio-worker-convenience', () => {
 
   describe('module imports', () => {
     it('exports convenience functions', async () => {
-      const module = await import('@/lib/audio/audio-worker-convenience');
-      expect(typeof module.renderAutoDjMixWithWorker).toBe('function');
-      expect(typeof module.analyzeTrackWithWorker).toBe('function');
-      expect(typeof module.separateStemsWithWorker).toBe('function');
+      const workerConv = await import('@/lib/audio/audio-worker-convenience');
+      expect(typeof workerConv.renderAutoDjMixWithWorker).toBe('function');
+      expect(typeof workerConv.analyzeTrackWithWorker).toBe('function');
+      expect(typeof workerConv.separateStemsWithWorker).toBe('function');
     });
   });
 });

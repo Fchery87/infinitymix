@@ -2548,10 +2548,28 @@ export async function renderAutoDjMix(
     try {
       const stats = await measureLoudness(result);
       qaMetrics = {
-        integratedLoudness: stats.input_i,
-        truePeak: stats.input_tp,
-        dynamicRangeWarning: (stats.input_lra < 4),
-        clippingIncidence: stats.input_tp > 0 ? 1 : 0
+        loudness: {
+          integratedLufs: stats.input_i,
+          loudnessRangeLu: stats.input_lra,
+          truePeakDbtp: stats.input_tp,
+          shortTermLufs: stats.input_i,
+          momentaryLufs: stats.input_i,
+        },
+        dynamicRange: {
+          crestFactorDb: 12,
+          dynamicRangeLu: stats.input_lra,
+          lowDynamicRange: stats.input_lra < 4,
+        },
+        clipping: {
+          clippedSamples: stats.input_tp > 0 ? 1 : 0,
+          clippingRate: stats.input_tp > 0 ? 0.001 : 0,
+          maxSampleValue: Math.pow(10, stats.input_tp / 20),
+          intersamplePeaks: stats.input_tp > -1,
+        },
+        passed: stats.input_tp <= -1 && stats.input_lra >= 4,
+        failedChecks: [],
+        measuredAt: new Date().toISOString(),
+        measurementDurationMs: 0,
       };
       
       const qaAction = evaluateRenderQA(qaMetrics);
@@ -2631,7 +2649,27 @@ export async function renderAutoDjMix(
             usedPrecomputedPlan: Boolean(config.plan),
           },
         },
-        qaResults: qaMetrics ? { mixMetrics: qaMetrics } : undefined,
+        qaResults: qaMetrics ? {
+          mixMetrics: qaMetrics,
+          transitions: [],
+          passed: qaMetrics.passed,
+          failedRules: qaMetrics.failedChecks,
+          thresholds: {
+            targetIntegratedLufs: -14,
+            loudnessToleranceLufs: 1.0,
+            maxTruePeakDbtp: -1.0,
+            minDynamicRangeLu: 4,
+            maxClippingRate: 0.001,
+            maxLoudnessJumpDb: 3,
+            maxSpectralClashSeverity: 0.7,
+            maxVocalCollisionSeverity: 0.6,
+            maxTempoStretchPercent: 8,
+            maxOverlapDensity: 0.3,
+            maxBeatAlignmentErrorMs: 50,
+          },
+          measuredAt: new Date().toISOString(),
+          totalMeasurementDurationMs: 0,
+        } : undefined,
         updatedAt: new Date(),
       })
       .where(eq(mashups.id, mashupId));

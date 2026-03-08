@@ -56,8 +56,7 @@ async function completeHandler(request: NextRequest) {
       })
       .returning();
 
-    // Fire and forget analysis using downloaded buffer
-    void enqueueAnalysis({
+    const queueReceipt = await enqueueAnalysis({
       type: 'analysis',
       trackId: track.id,
       buffer: fileObject.buffer,
@@ -67,7 +66,11 @@ async function completeHandler(request: NextRequest) {
       browserAnalysisHint,
     });
 
-    return NextResponse.json({ track: formatTrackResponse(track) });
+    return NextResponse.json({
+      track: formatTrackResponse(track, queueReceipt),
+      automation_job_id: queueReceipt.jobId,
+      queue_driver: queueReceipt.driver,
+    });
   } catch (error) {
     if (error instanceof ValidationError || error instanceof AuthenticationError) {
       return NextResponse.json({ error: error.message }, { status: error.statusCode });

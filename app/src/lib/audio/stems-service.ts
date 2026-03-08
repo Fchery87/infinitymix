@@ -13,6 +13,7 @@ import {
   separateWithHuggingFace, 
   getHuggingFaceStatus 
 } from './huggingface-stems';
+import { buildStemStorageKey } from '@/lib/runtime/assets';
 
 export type StemType = (typeof stemTypeEnum.enumValues)[number];
 export type StemQuality = (typeof stemQualityEnum.enumValues)[number];
@@ -259,7 +260,7 @@ export async function separateStems(trackId: string, quality: StemQuality = 'dra
         try {
           // Convert WAV to MP3
           const mp3Buffer = await convertWavToMp3(stemBuffer, quality);
-          const key = `${trackId}/stems/${stemType}.mp3`;
+          const key = buildStemStorageKey({ trackId, stemType, extension: 'mp3' });
           const url = await storage.uploadFile(mp3Buffer, key, 'audio/mpeg');
 
           const [saved] = await db
@@ -316,7 +317,7 @@ export async function separateStems(trackId: string, quality: StemQuality = 'dra
             bufferSize: stemBuffer.length 
           });
           // Save as WAV since FFmpeg conversion has issues on some systems
-          const key = `${trackId}/stems/${stemType}.wav`;
+          const key = buildStemStorageKey({ trackId, stemType, extension: 'wav' });
           const url = await storage.uploadFile(stemBuffer, key, 'audio/wav');
           log('info', 'stems.huggingface.uploaded', { trackId, stemType, url });
 
@@ -362,7 +363,7 @@ export async function separateStems(trackId: string, quality: StemQuality = 'dra
           stemType, 
           quality
         );
-        const key = `${trackId}/stems/${stemType}.mp3`;
+        const key = buildStemStorageKey({ trackId, stemType, extension: 'mp3' });
         const url = await storage.uploadFile(rendered, key, 'audio/mpeg');
 
         const [saved] = await db

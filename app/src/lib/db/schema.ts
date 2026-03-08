@@ -77,6 +77,18 @@ export const projectStatusEnum = pgEnum('project_status', [
   'completed',
   'archived',
 ]);
+export const automationJobKindEnum = pgEnum('automation_job_kind', [
+  'analysis',
+  'stems',
+  'mix',
+]);
+export const automationJobStatusEnum = pgEnum('automation_job_status', [
+  'queued',
+  'running',
+  'succeeded',
+  'failed',
+  'cancelled',
+]);
 
 // Users table - using text for id to support Better Auth's nanoid format
 export const users = pgTable('users', {
@@ -321,6 +333,51 @@ export const adminAuditLogs = pgTable(
   })
 );
 
+export const automationJobs = pgTable(
+  'automation_jobs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    kind: automationJobKindEnum('kind').notNull(),
+    status: automationJobStatusEnum('status').notNull().default('queued'),
+    resourceKind: varchar('resource_kind', { length: 32 }).notNull(),
+    resourceId: text('resource_id').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    ownerRuntime: varchar('owner_runtime', { length: 32 }).notNull().default('app'),
+    ownerLegacyMode: varchar('owner_legacy_mode', { length: 64 })
+      .notNull()
+      .default('legacy-non-authoritative'),
+    driver: varchar('driver', { length: 32 }).notNull().default('durable'),
+    retryable: boolean('retryable').notNull().default(true),
+    attempts: integer('attempts').notNull().default(0),
+    maxAttempts: integer('max_attempts').notNull().default(3),
+    idempotencyKey: varchar('idempotency_key', { length: 255 }).notNull(),
+    lastError: text('last_error'),
+    availableAt: timestamp('available_at').notNull().defaultNow(),
+    lockedAt: timestamp('locked_at'),
+    lockedBy: varchar('locked_by', { length: 128 }),
+    lockToken: varchar('lock_token', { length: 128 }),
+    startedAt: timestamp('started_at'),
+    completedAt: timestamp('completed_at'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    statusAvailableIdx: index('idx_automation_jobs_status_available').on(
+      table.status,
+      table.availableAt
+    ),
+    resourceIdx: index('idx_automation_jobs_resource').on(
+      table.resourceKind,
+      table.resourceId
+    ),
+    idempotencyIdx: index('idx_automation_jobs_idempotency').on(
+      table.idempotencyKey
+    ),
+    lockTokenIdx: index('idx_automation_jobs_lock_token').on(table.lockToken),
+    createdAtIdx: index('idx_automation_jobs_created_at').on(table.createdAt),
+  })
+);
+
 // Mashups table
 export const mashups = pgTable(
   'mashups',
@@ -545,6 +602,8 @@ export type UploadedTrack = typeof uploadedTracks.$inferSelect;
 export type NewUploadedTrack = typeof uploadedTracks.$inferInsert;
 export type AdminAuditLog = typeof adminAuditLogs.$inferSelect;
 export type NewAdminAuditLog = typeof adminAuditLogs.$inferInsert;
+export type AutomationJob = typeof automationJobs.$inferSelect;
+export type NewAutomationJob = typeof automationJobs.$inferInsert;
 export type Mashup = typeof mashups.$inferSelect;
 export type NewMashup = typeof mashups.$inferInsert;
 export type Feedback = typeof feedback.$inferSelect;

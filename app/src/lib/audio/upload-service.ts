@@ -4,6 +4,7 @@ import { getStorage } from '@/lib/storage';
 import { ValidationError } from '@/lib/utils/error-handling';
 import { enqueueAnalysis } from '@/lib/queue';
 import type { BrowserAnalysisHint } from '@/lib/audio/types/analysis';
+import { buildTrackUploadStorageKey } from '@/lib/runtime/assets';
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 const ALLOWED_TYPES = ['audio/mpeg', 'audio/wav', 'audio/mp3', 'audio/wave'];
@@ -36,6 +37,8 @@ export type UploadedTrackResponse = {
   has_stems: boolean;
   file_size_bytes: number;
   mime_type: string;
+  automation_job_id?: string | null;
+  queue_driver?: string | null;
   created_at: string;
 };
 
@@ -56,9 +59,10 @@ export async function processSingleUpload(
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
   const storage = await getStorage();
+  const storageKey = buildTrackUploadStorageKey(userId, file.name);
   const storageUrl = await storage.uploadFile(
     buffer,
-    `${userId}/${Date.now()}-${file.name}`,
+    storageKey,
     file.type
   );
 
@@ -77,7 +81,7 @@ export async function processSingleUpload(
     .returning();
 
   // Enqueue analysis (in-memory queue by default)
-  void enqueueAnalysis({
+  const queueReceipt = await enqueueAnalysis({
     type: 'analysis',
     trackId: track.id,
     buffer,
@@ -87,7 +91,7 @@ export async function processSingleUpload(
     browserAnalysisHint: browserAnalysisHint ?? undefined,
   });
 
-  return formatTrackResponse(track);
+  return formatTrackResponse(track, queueReceipt);
 }
 
 export async function finalizeUploadedBuffer(params: {
@@ -108,9 +112,10 @@ export async function finalizeUploadedBuffer(params: {
   }
 
   const storage = await getStorage();
+  const storageKey = buildTrackUploadStorageKey(params.userId, params.filename);
   const storageUrl = await storage.uploadFile(
     params.buffer,
-    `${params.userId}/${Date.now()}-${params.filename}`,
+    storageKey,
     params.contentType
   );
 
@@ -128,7 +133,7 @@ export async function finalizeUploadedBuffer(params: {
     })
     .returning();
 
-  void enqueueAnalysis({
+  const queueReceipt = await enqueueAnalysis({
     type: 'analysis',
     trackId: track.id,
     buffer: params.buffer,
@@ -138,7 +143,7 @@ export async function finalizeUploadedBuffer(params: {
     browserAnalysisHint: params.browserAnalysisHint ?? undefined,
   });
 
-  return formatTrackResponse(track);
+  return formatTrackResponse(track, queueReceipt);
 }
 
 export function parseBrowserAnalysisHintsInput(raw: FormDataEntryValue | null): BrowserAnalysisHint[] {
@@ -160,7 +165,8 @@ export function parseBrowserAnalysisHintsInput(raw: FormDataEntryValue | null): 
 }
 
 export function formatTrackResponse(
-  track: typeof uploadedTracks.$inferSelect
+  track: typeof uploadedTracks.$inferSelect,
+  queueReceipt?: { jobId: string | null; driver: string }
 ): UploadedTrackResponse {
   return {
     id: track.id,
@@ -189,6 +195,8 @@ export function formatTrackResponse(
     has_stems: Boolean(track.hasStems),
     file_size_bytes: track.fileSizeBytes,
     mime_type: track.mimeType,
+    automation_job_id: queueReceipt?.jobId ?? null,
+    queue_driver: queueReceipt?.driver ?? null,
     created_at: track.createdAt.toISOString(),
   };
 }

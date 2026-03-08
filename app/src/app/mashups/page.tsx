@@ -14,7 +14,7 @@ type Mashup = {
   id: string;
   name: string;
   duration_seconds: number;
-  status: 'pending' | 'queued' | 'generating' | 'completed' | 'failed';
+  status: 'pending' | 'generating' | 'completed' | 'failed';
   output_path: string | null;
   output_format: string | null;
   playback_path?: string | null;
@@ -26,7 +26,21 @@ type Mashup = {
   public_slug?: string | null;
   parent_mashup_id?: string | null;
   created_at: string;
+  latest_automation_job?: {
+    id: string;
+    status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+    last_error?: string | null;
+  } | null;
+  };
+
+type MashupListResponse = {
+  page: number;
+  limit: number;
+  total: number;
+  data: Mashup[];
 };
+
+const MASHUP_REFRESH_FALLBACK_MS = 4000;
 
 type TrendingMashup = {
   id: string;
@@ -55,6 +69,10 @@ export default function MashupsPage() {
   const [copyingId, setCopyingId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const applyMashupListPayload = useCallback((payload: MashupListResponse) => {
+    setMashups(payload.data || []);
+  }, []);
+
   const fetchMashups = useCallback(async (skipLoader = false) => {
     try {
       if (!skipLoader) setLoading(true);
@@ -66,15 +84,19 @@ export default function MashupsPage() {
         throw new Error(payload?.error || 'Failed to load mashups');
       }
 
-      const items = (payload.data || payload.mashups || []) as Mashup[];
-      setMashups(items);
+      applyMashupListPayload({
+        page: payload.page ?? 1,
+        limit: payload.limit ?? 25,
+        total: payload.total ?? 0,
+        data: (payload.data || payload.mashups || []) as Mashup[],
+      });
     } catch (error) {
       console.error(error);
       setErrorMessage(error instanceof Error ? error.message : 'Failed to load mashups');
     } finally {
       if (!skipLoader) setLoading(false);
     }
-  }, []);
+  }, [applyMashupListPayload]);
 
   const fetchTrending = useCallback(async () => {
     try {
@@ -94,15 +116,70 @@ export default function MashupsPage() {
   }, [fetchMashups, fetchTrending]);
 
   useEffect(() => {
-    const needsPolling = mashups.some((m) => m.status !== 'completed' && m.status !== 'failed');
-    if (!needsPolling) return;
+    let stream: EventSource | null = null;
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
+    let fallbackStarted = false;
+    let receivedStreamUpdate = false;
+    let cancelled = false;
 
-    const interval = setInterval(() => {
+    const stopPolling = () => {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+    };
+
+    const closeStream = () => {
+      if (stream) {
+        stream.close();
+        stream = null;
+      }
+    };
+
+    const startPollingFallback = () => {
+      if (fallbackStarted || cancelled) return;
+      fallbackStarted = true;
       void fetchMashups(true);
-    }, 4000);
+      pollInterval = setInterval(() => {
+        void fetchMashups(true);
+      }, MASHUP_REFRESH_FALLBACK_MS);
+    };
 
-    return () => clearInterval(interval);
-  }, [mashups, fetchMashups]);
+    if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+      startPollingFallback();
+    } else {
+      stream = new EventSource('/api/mashups/events');
+      stream.addEventListener('mashups', (event) => {
+        if (cancelled) return;
+        try {
+          receivedStreamUpdate = true;
+          applyMashupListPayload(
+            JSON.parse((event as MessageEvent<string>).data) as MashupListResponse
+          );
+          setLoading(false);
+          setErrorMessage(null);
+        } catch (error) {
+          console.error(error);
+        }
+      });
+      stream.addEventListener('error', () => {
+        closeStream();
+        startPollingFallback();
+      });
+
+      window.setTimeout(() => {
+        if (!cancelled && !fallbackStarted && !receivedStreamUpdate) {
+          startPollingFallback();
+        }
+      }, MASHUP_REFRESH_FALLBACK_MS);
+    }
+
+    return () => {
+      cancelled = true;
+      stopPolling();
+      closeStream();
+    };
+  }, [applyMashupListPayload, fetchMashups]);
 
   useEffect(() => {
     if (surveyMashupId) return;
@@ -475,6 +552,11 @@ export default function MashupsPage() {
                               <span className="px-2 py-0.5 rounded text-xs font-medium bg-white/5 text-gray-400 border border-white/5">
                                 {getStatusText(mashup.status)}
                               </span>
+                              {mashup.latest_automation_job?.status === 'queued' && mashup.status !== 'completed' && mashup.status !== 'failed' && (
+                                <span className="px-2 py-0.5 rounded text-xs font-medium bg-amber-500/10 text-amber-200 border border-amber-500/20">
+                                  Queued
+                                </span>
+                              )}
                               {mashup.is_public && (
                                 <span className="px-2 py-0.5 rounded text-xs font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
                                   Public
@@ -612,7 +694,9 @@ export default function MashupsPage() {
                           ) : (
                             <div className="flex items-center text-primary px-4">
                               <div className="w-4 h-4 border-2 border-t-primary border-primary/30 rounded-full animate-spin mr-2" />
-                              {getStatusText(mashup.status)}
+                              {mashup.latest_automation_job?.status === 'queued'
+                                ? 'Queued'
+                                : getStatusText(mashup.status)}
                             </div>
                           )}
                           <Button 

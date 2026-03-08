@@ -66,6 +66,7 @@ services:
       - infinitymix-network
 
   worker:
+    profiles: ['legacy-services']
     build:
       context: ./services/worker
       dockerfile: Dockerfile
@@ -77,6 +78,7 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       AWS_REGION: ${AWS_REGION:-us-east-1}
       S3_BUCKET: ${AWS_BUCKET_NAME:-infinitymix-dev}
+      INFINITYMIX_ENABLE_LEGACY_SERVICES: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -90,6 +92,7 @@ services:
       - infinitymix-network
 
   audio-analyzer:
+    profiles: ['legacy-services']
     build:
       context: ./services/analyzer
       dockerfile: Dockerfile
@@ -100,6 +103,7 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       AWS_REGION: ${AWS_REGION:-us-east-1}
       S3_BUCKET: ${AWS_BUCKET_NAME:-infinitymix-dev}
+      INFINITYMIX_ENABLE_LEGACY_SERVICES: "true"
     depends_on:
       redis:
         condition: service_healthy
@@ -111,6 +115,7 @@ services:
       - infinitymix-network
 
   audio-renderer:
+    profiles: ['legacy-services']
     build:
       context: ./services/renderer
       dockerfile: Dockerfile
@@ -121,6 +126,7 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       AWS_REGION: ${AWS_REGION:-us-east-1}
       S3_BUCKET: ${AWS_BUCKET_NAME:-infinitymix-dev}
+      INFINITYMIX_ENABLE_LEGACY_SERVICES: "true"
     depends_on:
       redis:
         condition: service_healthy

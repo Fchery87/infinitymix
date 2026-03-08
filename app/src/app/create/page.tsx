@@ -84,6 +84,24 @@ type PublicPipelineConfig = {
   };
 };
 
+type ActiveGeneration = {
+  mashupId: string;
+  automationJobId?: string | null;
+  label: string;
+};
+
+type MashupStatusResponse = {
+  id: string;
+  status: 'pending' | 'generating' | 'completed' | 'failed';
+  latest_automation_job?: {
+    id: string;
+    status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+    last_error?: string | null;
+  } | null;
+};
+
+const GENERATION_POLL_INTERVAL_MS = 3000;
+
 export default function CreatePage() {
   const audioFeatureFlags = getPublicAudioPipelineFeatureFlags();
   const [isAuthenticated] = useState(true); // Auto-logged in for development
@@ -99,6 +117,7 @@ export default function CreatePage() {
   const [customDurationSeconds, setCustomDurationSeconds] = useState<number | null>(180);
   const [selectedTrackIds, setSelectedTrackIds] = useState<string[]>([]);
   const [generationMessage, setGenerationMessage] = useState<string | null>(null);
+  const [activeGeneration, setActiveGeneration] = useState<ActiveGeneration | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isBrowserPreviewing, setIsBrowserPreviewing] = useState(false);
@@ -109,6 +128,7 @@ export default function CreatePage() {
   const [stylePacks, setStylePacks] = useState<StylePackOption[]>([]);
   const [selectedStylePackId, setSelectedStylePackId] = useState<string | null>(null);
   const [audioPipelineConfig, setAudioPipelineConfig] = useState<PublicPipelineConfig | null>(null);
+  const stemMashupAvailable = false;
   
   // Project-related state
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -309,6 +329,136 @@ export default function CreatePage() {
     return () => clearInterval(interval);
   }, [uploadedTracks, loadTracks]);
 
+  const applyGenerationStatus = useCallback(
+    (generation: ActiveGeneration, data: MashupStatusResponse) => {
+      const jobStatus = data.latest_automation_job?.status ?? null;
+      if (data.status === 'completed') {
+        setGenerationMessage(
+          `${generation.label} complete. Open My Mashups to play or download it.`
+        );
+        setActiveGeneration((current) =>
+          current?.mashupId === generation.mashupId ? null : current
+        );
+        return true;
+      }
+
+      if (data.status === 'failed') {
+        const errorSuffix = data.latest_automation_job?.last_error
+          ? ` Error: ${data.latest_automation_job.last_error}`
+          : '';
+        setGenerationMessage(`${generation.label} failed.${errorSuffix}`);
+        setActiveGeneration((current) =>
+          current?.mashupId === generation.mashupId ? null : current
+        );
+        return true;
+      }
+
+      if (jobStatus === 'queued') {
+        setGenerationMessage(`${generation.label} queued for processing...`);
+      } else if (jobStatus === 'running' || data.status === 'generating') {
+        setGenerationMessage(`${generation.label} is processing...`);
+      } else {
+        setGenerationMessage(`${generation.label} is pending...`);
+      }
+
+      return false;
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!activeGeneration) return;
+
+    let cancelled = false;
+    let stream: EventSource | null = null;
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
+    let fallbackStarted = false;
+    let receivedStreamUpdate = false;
+
+    const stopPolling = () => {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+    };
+
+    const closeStream = () => {
+      if (stream) {
+        stream.close();
+        stream = null;
+      }
+    };
+
+    const pollStatus = async () => {
+      try {
+        const response = await fetch(`/api/mashups/${activeGeneration.mashupId}`, {
+          cache: 'no-store',
+        });
+        if (!response.ok || cancelled) return;
+
+        const data = (await response.json()) as MashupStatusResponse;
+        const finished = applyGenerationStatus(activeGeneration, data);
+        if (finished) {
+          stopPolling();
+          closeStream();
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error(error);
+        }
+      }
+    };
+
+    const startPollingFallback = () => {
+      if (fallbackStarted || cancelled) return;
+      fallbackStarted = true;
+      void pollStatus();
+      pollInterval = setInterval(() => {
+        void pollStatus();
+      }, GENERATION_POLL_INTERVAL_MS);
+    };
+
+    if (typeof window === 'undefined' || typeof window.EventSource === 'undefined') {
+      startPollingFallback();
+    } else {
+      stream = new EventSource(`/api/mashups/${activeGeneration.mashupId}/events`);
+      stream.addEventListener('status', (event) => {
+        if (cancelled) return;
+        try {
+          receivedStreamUpdate = true;
+          const data = JSON.parse((event as MessageEvent<string>).data) as MashupStatusResponse;
+          const finished = applyGenerationStatus(activeGeneration, data);
+          if (finished) {
+            stopPolling();
+            closeStream();
+          }
+        } catch (error) {
+          console.error(error);
+        }
+      });
+      stream.addEventListener('end', () => {
+        stopPolling();
+        closeStream();
+      });
+      stream.addEventListener('error', () => {
+        closeStream();
+        startPollingFallback();
+      });
+
+      window.setTimeout(() => {
+        if (!cancelled && !fallbackStarted && !receivedStreamUpdate) {
+          startPollingFallback();
+        }
+      }, GENERATION_POLL_INTERVAL_MS);
+    }
+
+    return () => {
+      cancelled = true;
+      stopPolling();
+      closeStream();
+    };
+  }, [activeGeneration, applyGenerationStatus]);
+
   const handleFileUpload = (files: FileList) => {
     if (!files || files.length === 0) return;
 
@@ -491,7 +641,12 @@ export default function CreatePage() {
         throw new Error(data?.error || 'Failed to start mashup generation');
       }
 
-      setGenerationMessage('Mashup request accepted and processing. You can check My Mashups for output once ready.');
+      setGenerationMessage('Mashup request accepted. Queueing generation...');
+      setActiveGeneration({
+        mashupId: data.id,
+        automationJobId: data.automation_job_id ?? null,
+        label: 'Mashup',
+      });
     } catch (error) {
       console.error(error);
       alert(error instanceof Error ? error.message : 'Failed to start mashup generation');
@@ -546,7 +701,11 @@ export default function CreatePage() {
         throw new Error(data?.error || 'Failed to start stem mashup generation');
       }
 
-      setGenerationMessage('Stem mashup creating! Vocals + Instrumental being mixed. Check My Mashups soon.');
+      setGenerationMessage('Stem mashup request accepted. Preparing render...');
+      setActiveGeneration({
+        mashupId: data.id,
+        label: 'Stem mashup',
+      });
     } catch (error) {
       console.error(error);
       alert(error instanceof Error ? error.message : 'Failed to start stem mashup');
@@ -590,7 +749,12 @@ export default function CreatePage() {
         throw new Error(data?.error || 'Failed to start auto DJ mix');
       }
 
-      setGenerationMessage('Auto DJ mix is being created. Check My Mashups soon.');
+      setGenerationMessage('Auto DJ mix request accepted. Preparing render...');
+      setActiveGeneration({
+        mashupId: data.id,
+        automationJobId: data.automation_job_id ?? null,
+        label: 'Auto DJ mix',
+      });
     } catch (error) {
       console.error(error);
       alert(error instanceof Error ? error.message : 'Failed to start auto DJ mix');
@@ -941,16 +1105,25 @@ export default function CreatePage() {
                     <p className="text-xs text-gray-500">Layer full tracks</p>
                   </button>
                   <button
-                    onClick={() => setMixMode('stem_mashup')}
+                    onClick={() => {
+                      if (stemMashupAvailable) {
+                        setMixMode('stem_mashup');
+                      }
+                    }}
+                    disabled={!stemMashupAvailable}
                     className={`p-4 rounded-lg border transition-all ${
                       mixMode === 'stem_mashup'
                         ? 'border-primary bg-primary/10 text-white'
-                        : 'border-white/10 hover:border-white/20 text-gray-400'
+                        : stemMashupAvailable
+                          ? 'border-white/10 hover:border-white/20 text-gray-400'
+                          : 'border-white/5 text-gray-600 opacity-60 cursor-not-allowed'
                     }`}
                   >
                     <Mic2 className="w-5 h-5 mx-auto mb-2" />
                     <p className="text-sm font-medium">Stem Mashup</p>
-                    <p className="text-xs text-gray-500">Vocals + Instrumental</p>
+                    <p className="text-xs text-gray-500">
+                      {stemMashupAvailable ? 'Vocals + Instrumental' : 'Temporarily unavailable'}
+                    </p>
                   </button>
                   <button
                     onClick={() => setMixMode('auto_dj')}
@@ -969,7 +1142,7 @@ export default function CreatePage() {
             </Card>
 
             {/* Stem Mashup Selection - only show when in stem mode */}
-            {mixMode === 'stem_mashup' && (
+            {mixMode === 'stem_mashup' && stemMashupAvailable && (
               <Card className="bg-card/60 backdrop-blur-xl border-primary/20">
                 <CardContent className="pt-6 space-y-4">
                   <div className="flex items-center gap-2">
@@ -1538,28 +1711,19 @@ export default function CreatePage() {
                             className="w-full h-14 text-lg font-bold relative overflow-hidden group" 
                             variant="default"
                             onClick={handleGenerateStemMashup}
-                            disabled={isGenerating || !vocalTrackId || !instrumentalTrackId}
+                            disabled={true}
                         >
                             <div className="absolute inset-0 bg-gradient-to-r from-pink-500 via-primary to-orange-500 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                             <span className="relative z-10 flex items-center justify-center">
-                            {isGenerating ? (
-                                <>
-                                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-3" />
-                                Mixing Stems...
-                                </>
-                            ) : (
-                                <>
-                                <Mic2 className="w-5 h-5 mr-2" />
-                                Create Stem Mashup
-                                </>
-                            )}
+                            <>
+                            <Mic2 className="w-5 h-5 mr-2" />
+                            Stem Mashup Unavailable
+                            </>
                             </span>
                         </Button>
-                        {(!vocalTrackId || !instrumentalTrackId) && (
-                            <p className="text-xs text-center mt-3 text-gray-500">
-                            * Select both vocal and instrumental tracks above
-                            </p>
-                        )}
+                        <p className="text-xs text-center mt-3 text-gray-500">
+                        * Disabled during Phase 0 runtime unification
+                        </p>
                       </>
                     ) : (
                       <>

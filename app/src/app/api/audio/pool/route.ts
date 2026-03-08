@@ -139,7 +139,7 @@ async function handleGet(request: NextRequest) {
     ]);
 
     const total = Number(countResult[0]?.count ?? 0);
-    const formattedTracks = tracks.map(formatTrackResponse);
+    const formattedTracks = tracks.map((track) => formatTrackResponse(track));
     const qualityCounts = Object.fromEntries(
       qualityCountsRaw.map((row) => [row.analysisQuality ?? 'unknown', Number(row.count ?? 0)])
     );

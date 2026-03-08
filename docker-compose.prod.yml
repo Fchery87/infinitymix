@@ -81,6 +81,7 @@ services:
           cpus: '0.5'
 
   worker:
+    profiles: ['legacy-services']
     build:
       context: ./services/worker
       dockerfile: Dockerfile
@@ -94,6 +95,7 @@ services:
       AWS_REGION: ${AWS_REGION}
       S3_BUCKET: ${AWS_BUCKET_NAME}
       SENTRY_DSN: ${SENTRY_DSN}
+      INFINITYMIX_ENABLE_LEGACY_SERVICES: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -109,6 +111,7 @@ services:
           cpus: '0.5'
 
   audio-analyzer:
+    profiles: ['legacy-services']
     build:
       context: ./services/analyzer
       dockerfile: Dockerfile
@@ -121,6 +124,7 @@ services:
       AWS_REGION: ${AWS_REGION}
       S3_BUCKET: ${AWS_BUCKET_NAME}
       SENTRY_DSN: ${SENTRY_DSN}
+      INFINITYMIX_ENABLE_LEGACY_SERVICES: "true"
     depends_on:
       redis:
         condition: service_healthy
@@ -134,6 +138,7 @@ services:
           cpus: '0.5'
 
   audio-renderer:
+    profiles: ['legacy-services']
     build:
       context: ./services/renderer
       dockerfile: Dockerfile
@@ -146,6 +151,7 @@ services:
       AWS_REGION: ${AWS_REGION}
       S3_BUCKET: ${AWS_BUCKET_NAME}
       SENTRY_DSN: ${SENTRY_DSN}
+      INFINITYMIX_ENABLE_LEGACY_SERVICES: "true"
     depends_on:
       redis:
         condition: service_healthy

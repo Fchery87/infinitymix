@@ -1,61 +1,33 @@
 import { startTrackAnalysis } from '@/lib/audio/analysis-service';
 import { separateStems } from '@/lib/audio/stems-service';
 import { renderAutoDjMix } from '@/lib/audio/auto-dj-service';
-import type { BrowserAnalysisHint } from '@/lib/audio/types/analysis';
+import {
+  type AutomationEnqueueReceipt,
+  type AnalysisJobPayload,
+  type AutomationJobKind,
+  type AutomationQueueStats,
+  type MixJobPayload,
+  type QueueDriver,
+  type StemsJobPayload,
+} from '@/lib/runtime/contracts';
+import { InMemoryAutomationQueueDriver } from '@/lib/runtime/in-memory-queue-driver';
+import { DurableAutomationQueueDriver } from '@/lib/runtime/durable-queue-driver';
 
-type JobType = 'analysis' | 'stems' | 'mix';
-
-type JobPayload =
-  | {
-      type: 'analysis';
-      trackId: string;
-      buffer?: Buffer;
-      storageUrl?: string;
-      mimeType: string;
-      fileName: string;
-      browserAnalysisHint?: BrowserAnalysisHint;
-    }
-  | { type: 'stems'; trackId: string; quality?: 'draft' | 'hifi' }
-  | { type: 'mix'; mashupId: string; inputTrackIds: string[]; durationSeconds: number; mixMode?: 'standard' | 'vocals_over_instrumental' | 'drum_swap' };
-
+type JobType = AutomationJobKind;
+type JobPayload = AnalysisJobPayload | StemsJobPayload | MixJobPayload;
 type Handler<T extends JobType> = (payload: Extract<JobPayload, { type: T }>) => Promise<void>;
 
-class InMemoryQueue {
-  private handlers = new Map<JobType, (payload: unknown) => Promise<void>>();
-  private queue: JobPayload[] = [];
-  private running = 0;
-  private readonly concurrency: number;
-
-  constructor(concurrency = 3) {
-    this.concurrency = concurrency;
-  }
-
-  on<T extends JobType>(type: T, handler: Handler<T>) {
-    this.handlers.set(type, handler as (payload: unknown) => Promise<void>);
-  }
-
-  async add(job: JobPayload) {
-    this.queue.push(job);
-    this.pump();
-  }
-
-  private pump() {
-    if (this.running >= this.concurrency) return;
-    const job = this.queue.shift();
-    if (!job) return;
-    const handler = this.handlers.get(job.type);
-    if (!handler) return;
-    this.running += 1;
-    void handler(job as Extract<JobPayload, { type: JobType }>)
-      .catch(() => undefined)
-      .finally(() => {
-        this.running -= 1;
-        setTimeout(() => this.pump(), 0);
-      });
-  }
+function resolveQueueDriver(): QueueDriver {
+  const configured = process.env.IMX_QUEUE_DRIVER?.trim().toLowerCase();
+  if (configured === 'in-memory') return 'in-memory';
+  return 'durable';
 }
 
-const queue = new InMemoryQueue(4);
+const selectedDriver = resolveQueueDriver();
+const queue =
+  selectedDriver === 'in-memory'
+    ? new InMemoryAutomationQueueDriver(4)
+    : new DurableAutomationQueueDriver();
 
 queue.on('analysis', async ({ trackId, buffer, storageUrl, mimeType, fileName, browserAnalysisHint }) => {
   await startTrackAnalysis({ trackId, buffer, storageUrl, mimeType, fileName, browserAnalysisHint });
@@ -65,7 +37,8 @@ queue.on('stems', async ({ trackId, quality }) => {
   await separateStems(trackId, quality ?? 'draft');
 });
 
-queue.on('mix', async ({ mashupId, inputTrackIds, durationSeconds, mixMode }) => {
+queue.on('mix', async (payload) => {
+  const { mashupId, inputTrackIds, durationSeconds, mixMode } = payload;
   const config: { trackIds: string[]; targetDurationSeconds: number; mixMode?: 'standard' | 'vocals_over_instrumental' | 'drum_swap' } = {
     trackIds: inputTrackIds,
     targetDurationSeconds: durationSeconds,
@@ -73,21 +46,28 @@ queue.on('mix', async ({ mashupId, inputTrackIds, durationSeconds, mixMode }) =>
   if (mixMode) {
     config.mixMode = mixMode;
   }
+  if (payload.autoDjConfig) {
+    Object.assign(config, payload.autoDjConfig);
+  }
   await renderAutoDjMix(mashupId, config);
 });
 
 export async function enqueueAnalysis(payload: Extract<JobPayload, { type: 'analysis' }>) {
-  await queue.add(payload);
+  return queue.enqueue(payload) as Promise<AutomationEnqueueReceipt>;
 }
 
 export async function enqueueStems(payload: Extract<JobPayload, { type: 'stems' }>) {
-  await queue.add(payload);
+  return queue.enqueue(payload) as Promise<AutomationEnqueueReceipt>;
 }
 
 export async function enqueueMix(payload: Extract<JobPayload, { type: 'mix' }>) {
-  await queue.add(payload);
+  return queue.enqueue(payload) as Promise<AutomationEnqueueReceipt>;
 }
 
-export function queueDriver() {
-  return 'in-memory';
+export function queueDriver(): QueueDriver {
+  return selectedDriver;
+}
+
+export function getQueueStats(): AutomationQueueStats {
+  return queue.getStats();
 }

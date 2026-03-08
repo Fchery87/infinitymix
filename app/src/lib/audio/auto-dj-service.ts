@@ -13,6 +13,11 @@ import { getTrackInfoForMixing } from './stems-service';
 import { eq, inArray } from 'drizzle-orm';
 import { uploadedTracks } from '@/lib/db/schema';
 import path from 'node:path';
+import {
+  buildMashupStorageKey,
+  buildPreviewStorageKey,
+} from '@/lib/runtime/assets';
+import { buildPreviewGenerationIdempotencyKey } from '@/lib/runtime/recovery';
 
 export type { TransitionPreset } from './presets/transition-presets';
 
@@ -1573,9 +1578,18 @@ export async function renderTransitionPreview(
     if (!buffer.length)
       throw new Error('Preview rendering produced empty output');
 
+    const previewIdempotencyKey = buildPreviewGenerationIdempotencyKey({
+      userId: 'preview',
+      trackIds: [config.trackAId, config.trackBId],
+      durationSeconds: Math.round(config.mixPoint.overlapSeconds),
+      mixMode: config.transitionStyle ?? 'smooth',
+    });
     const url = await storage.uploadFile(
       buffer,
-      `preview-${config.trackAId}-${config.trackBId}.${PLAYBACK_OUTPUT_FORMAT}`,
+      buildPreviewStorageKey({
+        previewIdempotencyKey,
+        extension: 'mp3',
+      }),
       'audio/mpeg'
     );
     return {
@@ -2538,12 +2552,20 @@ export async function renderAutoDjMix(
 
     const outputUrl = await storage.uploadFile(
       result,
-      `${mashupId}.${MASTER_OUTPUT_FORMAT}`,
+      buildMashupStorageKey({
+        mashupId,
+        variant: 'master',
+        extension: 'wav',
+      }),
       'audio/wav'
     );
     const playbackUrl = await storage.uploadFile(
       playbackBuffer,
-      `${mashupId}-playback.${PLAYBACK_OUTPUT_FORMAT}`,
+      buildMashupStorageKey({
+        mashupId,
+        variant: 'playback',
+        extension: 'mp3',
+      }),
       'audio/mpeg'
     );
     const processingTime = Date.now() - startedAt;

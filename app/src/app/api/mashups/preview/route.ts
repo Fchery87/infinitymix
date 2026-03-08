@@ -5,6 +5,10 @@ import { uploadedTracks } from '@/lib/db/schema';
 import { mixToBuffer } from '@/lib/audio/mixing-service';
 import { getStorage } from '@/lib/storage';
 import { eq, and, inArray } from 'drizzle-orm';
+import {
+  buildPreviewGenerationIdempotencyKey,
+  getAutomationRecoveryPolicy,
+} from '@/lib/runtime/recovery';
 
 const MAX_DURATION = 30;
 
@@ -34,6 +38,13 @@ export async function POST(request: NextRequest) {
     }
 
     const safeDuration = Math.min(MAX_DURATION, Math.max(10, Number(durationSeconds) || 20));
+    const previewIdempotencyKey = buildPreviewGenerationIdempotencyKey({
+      userId: user.id,
+      trackIds,
+      durationSeconds: safeDuration,
+      mixMode,
+    });
+    const recoveryPolicy = getAutomationRecoveryPolicy('preview');
 
     const records = await db
       .select({ id: uploadedTracks.id, storageUrl: uploadedTracks.storageUrl, mimeType: uploadedTracks.mimeType, userId: uploadedTracks.userId, bpm: uploadedTracks.bpm })
@@ -62,6 +73,8 @@ export async function POST(request: NextRequest) {
       headers: {
         'Content-Type': 'audio/mpeg',
         'Cache-Control': 'no-store',
+        'X-Preview-Idempotency-Key': previewIdempotencyKey,
+        'X-Automation-Recovery-Policy': recoveryPolicy.execution,
       },
     });
   } catch (error) {

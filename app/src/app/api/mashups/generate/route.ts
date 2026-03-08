@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
     await db.insert(mashupInputTracks).values(trackRelations);
 
     // Start async generation process (queued)
-    void withTelemetry(
+    const queueReceipt = await withTelemetry(
       'mashup.generate.render',
       () =>
         enqueueMix({
@@ -165,6 +165,8 @@ export async function POST(request: NextRequest) {
       status: mashup.generationStatus,
       output_path: null,
       output_format: mashup.outputFormat,
+      automation_job_id: queueReceipt.jobId,
+      queue_driver: queueReceipt.driver,
       generation_time_ms: null,
       mix_mode: mashup.mixMode,
       created_at: mashup.createdAt,

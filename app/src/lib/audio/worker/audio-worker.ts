@@ -1,18 +1,22 @@
 import { parentPort, workerData } from 'worker_threads';
-import type { AudioWorkerJob, AudioWorkerResult, AudioWorkerProgress } from './audio-worker-pool';
+import type {
+  AutomationWorkerJob,
+  AutomationWorkerProgress,
+  AutomationWorkerResult,
+} from '@/lib/runtime/contracts';
 
 void workerData;
 
 function sendProgress(jobId: string, progress: number, stage: string, message?: string): void {
-  const progressMsg: AudioWorkerProgress = { jobId, progress, stage, message };
+  const progressMsg: AutomationWorkerProgress = { jobId, progress, stage, message };
   parentPort?.postMessage(progressMsg);
 }
 
-function sendResult(result: AudioWorkerResult): void {
+function sendResult(result: AutomationWorkerResult): void {
   parentPort?.postMessage(result);
 }
 
-async function processAnalysisJob(job: AudioWorkerJob): Promise<AudioWorkerResult> {
+async function processAnalysisJob(job: AutomationWorkerJob): Promise<AutomationWorkerResult> {
   const startTime = Date.now();
   
   try {
@@ -49,7 +53,7 @@ async function processAnalysisJob(job: AudioWorkerJob): Promise<AudioWorkerResul
   }
 }
 
-async function processMixingJob(job: AudioWorkerJob): Promise<AudioWorkerResult> {
+async function processMixingJob(job: AutomationWorkerJob): Promise<AutomationWorkerResult> {
   const startTime = Date.now();
   
   try {
@@ -84,7 +88,7 @@ async function processMixingJob(job: AudioWorkerJob): Promise<AudioWorkerResult>
   }
 }
 
-async function processStemsJob(job: AudioWorkerJob): Promise<AudioWorkerResult> {
+async function processStemsJob(job: AutomationWorkerJob): Promise<AutomationWorkerResult> {
   const startTime = Date.now();
   
   try {
@@ -116,26 +120,19 @@ async function processStemsJob(job: AudioWorkerJob): Promise<AudioWorkerResult> 
   }
 }
 
-async function processAutoDjJob(job: AudioWorkerJob): Promise<AudioWorkerResult> {
-  return processMixingJob(job);
-}
-
-parentPort?.on('message', async (job: AudioWorkerJob) => {
-  let result: AudioWorkerResult;
+parentPort?.on('message', async (job: AutomationWorkerJob) => {
+  let result: AutomationWorkerResult;
   
   try {
     switch (job.type) {
       case 'analysis':
         result = await processAnalysisJob(job);
         break;
-      case 'mixing':
+      case 'mix':
         result = await processMixingJob(job);
         break;
       case 'stems':
         result = await processStemsJob(job);
-        break;
-      case 'auto-dj':
-        result = await processAutoDjJob(job);
         break;
       default:
         result = {

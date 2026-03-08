@@ -2,7 +2,9 @@ export {
   submitAudioJob,
   getQueueStats,
   shutdownWorkers,
-  type AudioWorkerJob,
-  type AudioWorkerResult,
-  type AudioWorkerProgress,
 } from './audio-worker-pool';
+export type {
+  AutomationWorkerJob as AudioWorkerJob,
+  AutomationWorkerProgress as AudioWorkerProgress,
+  AutomationWorkerResult as AudioWorkerResult,
+} from '@/lib/runtime/contracts';

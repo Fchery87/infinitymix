@@ -15,7 +15,7 @@ export async function renderAutoDjMixWithWorker(
   try {
     const result = await submitAudioJob(
       {
-        type: 'auto-dj',
+        type: 'mix',
         input: {
           config: {
             mashupId,

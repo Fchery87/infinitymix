@@ -7,11 +7,12 @@ import { assertDurationQuota } from '@/lib/monetization';
 import { generateMashupName } from '@/lib/utils/helpers';
 import { logTelemetry, withTelemetry } from '@/lib/telemetry';
 import { and, eq, inArray } from 'drizzle-orm';
-import { renderAutoDjMix, planAutoDjMix } from '@/lib/audio/auto-dj-service';
+import { planAutoDjMix } from '@/lib/audio/auto-dj-service';
 import { withRateLimit, mashupGenerateRateLimit, generalApiRateLimit } from '@/lib/utils/rate-limiting';
 import { applyStylePackToAutoDjRequest, getBuiltInStylePackById, listBuiltInStylePackSummaries, validateStylePack, type StylePack } from '@/lib/styles';
 import { assignAudioRolloutVariant, getAudioRolloutConfigs } from '@/lib/audio/rollouts';
 import { getAudioRolloutOverrides } from '@/lib/audio/rollout-overrides';
+import { enqueueMix } from '@/lib/queue';
 
 const withMashupRateLimit = withRateLimit(mashupGenerateRateLimit);
 const withGeneralRateLimit = withRateLimit(generalApiRateLimit);
@@ -383,48 +384,37 @@ async function handlePost(request: NextRequest) {
       })
       .where(eq(mashups.id, mashup.id));
 
-    (async () => {
-      try {
-        await withTelemetry(
-          'autoDj.render.start',
-          () =>
-            renderAutoDjMix(mashup.id, {
-              trackIds: parsed.trackIds,
-              targetDurationSeconds: parsed.targetDurationSeconds,
-              targetBpm: parsed.targetBpm,
-              transitionStyle: plannerRequest.transitionStyle,
-              fadeDurationSeconds: plannerRequest.fadeDurationSeconds,
-              energyMode: plannerRequest.energyMode,
-              keepOrder: plannerRequest.keepOrder,
-              preferStems: plannerRequest.preferStems,
-              eventType: parsed.eventType,
-              plan,
-              enableMultibandCompression: parsed.enableMultibandCompression,
-              enableSidechainDucking: parsed.enableSidechainDucking,
-              enableDynamicEQ: parsed.enableDynamicEQ,
-              loudnessNormalization: parsed.loudnessNormalization,
-              targetLoudness: parsed.targetLoudness,
-              enableFilterSweep: parsed.enableFilterSweep,
-              tempoRampSeconds: parsed.tempoRampSeconds,
-              plannerVariant: plannerRolloutAssignment.variant,
-            }),
-          { mashupId: mashup.id }
-        );
-      } catch (error) {
-        console.error('Auto DJ mix render error:', error);
-        await db
-          .update(mashups)
-          .set({ 
-            generationStatus: 'failed',
-            updatedAt: new Date() 
-          })
-          .where(eq(mashups.id, mashup.id));
-        logTelemetry({ 
-          name: 'autoDj.render.failed', 
-          properties: { mashupId: mashup.id, error: (error as Error).message } 
-        });
-      }
-    })();
+    const queueReceipt = await withTelemetry(
+      'autoDj.render.enqueue',
+      () =>
+        enqueueMix({
+          type: 'mix',
+          mashupId: mashup.id,
+          inputTrackIds: parsed.trackIds,
+          durationSeconds: parsed.targetDurationSeconds,
+          renderProfile: 'auto_dj',
+          mixMode: 'standard',
+          autoDjConfig: {
+            targetBpm: parsed.targetBpm,
+            transitionStyle: plannerRequest.transitionStyle,
+            fadeDurationSeconds: plannerRequest.fadeDurationSeconds,
+            energyMode: plannerRequest.energyMode,
+            keepOrder: plannerRequest.keepOrder,
+            preferStems: plannerRequest.preferStems,
+            eventType: parsed.eventType,
+            plan,
+            enableMultibandCompression: parsed.enableMultibandCompression,
+            enableSidechainDucking: parsed.enableSidechainDucking,
+            enableDynamicEQ: parsed.enableDynamicEQ,
+            loudnessNormalization: parsed.loudnessNormalization,
+            targetLoudness: parsed.targetLoudness,
+            enableFilterSweep: parsed.enableFilterSweep,
+            tempoRampSeconds: parsed.tempoRampSeconds,
+            plannerVariant: plannerRolloutAssignment.variant,
+          },
+        }),
+      { mashupId: mashup.id }
+    );
 
     logTelemetry({
       name: 'autoDj.request.accepted',
@@ -444,6 +434,8 @@ async function handlePost(request: NextRequest) {
       status: mashup.generationStatus,
       duration_seconds: mashup.targetDurationSeconds,
       mix_mode: mashup.mixMode,
+      automation_job_id: queueReceipt.jobId,
+      queue_driver: queueReceipt.driver,
       created_at: mashup.createdAt,
       updated_at: mashup.updatedAt,
     });

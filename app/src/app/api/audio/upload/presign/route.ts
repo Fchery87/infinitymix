@@ -4,6 +4,7 @@ import { presignUploadSchema } from '@/lib/utils/validation';
 import { ValidationError, AuthenticationError } from '@/lib/utils/error-handling';
 import { getStorage } from '@/lib/storage';
 import { uploadRateLimit, withRateLimit } from '@/lib/utils/rate-limiting';
+import { buildTrackUploadStorageKey } from '@/lib/runtime/assets';
 
 const ALLOWED_TYPES = ['audio/mpeg', 'audio/wav', 'audio/mp3', 'audio/wave'];
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
@@ -32,7 +33,7 @@ async function presignHandler(request: NextRequest) {
       return NextResponse.json({ error: 'Presigned uploads are not supported' }, { status: 501 });
     }
 
-    const key = `${user.id}/${Date.now()}-${filename}`;
+    const key = buildTrackUploadStorageKey(user.id, filename);
     const presigned = await storage.createPresignedUpload({ key, contentType, contentLength: size });
 
     return NextResponse.json({

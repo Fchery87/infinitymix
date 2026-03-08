@@ -4,6 +4,12 @@ import { AudioRenderer } from './AudioRenderer'
 import { logger } from './utils/logger'
 import { config } from './utils/config'
 
+if (process.env.INFINITYMIX_ENABLE_LEGACY_SERVICES !== 'true') {
+  throw new Error(
+    'Legacy renderer service is deprecated. Use the app-owned automation runtime in app/. Set INFINITYMIX_ENABLE_LEGACY_SERVICES=true only for explicit legacy debugging.'
+  )
+}
+
 interface RenderingJobData {
   mashupId: string
   timelinePlan: {

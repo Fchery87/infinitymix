@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth/session';
-import { db } from '@/lib/db';
-import { mashups } from '@/lib/db/schema';
 import { log } from '@/lib/logger';
-import { eq, desc, count } from 'drizzle-orm';
+import { getMashupListForUser } from '@/lib/runtime/mashup-list';
 import { withRateLimit, generalApiRateLimit } from '@/lib/utils/rate-limiting';
 
 const withGeneralRateLimit = withRateLimit(generalApiRateLimit);
@@ -21,79 +19,10 @@ async function handleGet(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
     const limit = Math.min(50, Math.max(1, parseInt(searchParams.get('limit') || '10', 10)));
-    const offset = (page - 1) * limit;
-
     const cacheControl = 'private, max-age=30';
+    const mashupList = await getMashupListForUser({ userId: user.id, page, limit });
 
-    // Get total count
-    const [totalCount] = await db
-      .select({ count: count() })
-      .from(mashups)
-      .where(eq(mashups.userId, user.id));
-
-    // Get mashups with pagination
-    const userMashups = await db
-      .select({
-        id: mashups.id,
-        userId: mashups.userId,
-        name: mashups.name,
-        targetDurationSeconds: mashups.targetDurationSeconds,
-        generationStatus: mashups.generationStatus,
-        outputStorageUrl: mashups.outputStorageUrl,
-        publicPlaybackUrl: mashups.publicPlaybackUrl,
-        outputFormat: mashups.outputFormat,
-        generationTimeMs: mashups.generationTimeMs,
-        recommendationContext: mashups.recommendationContext,
-        playbackCount: mashups.playbackCount,
-        downloadCount: mashups.downloadCount,
-        isPublic: mashups.isPublic,
-        publicSlug: mashups.publicSlug,
-        parentMashupId: mashups.parentMashupId,
-        createdAt: mashups.createdAt,
-        updatedAt: mashups.updatedAt,
-      })
-      .from(mashups)
-      .where(eq(mashups.userId, user.id))
-      .orderBy(desc(mashups.createdAt))
-      .limit(limit)
-      .offset(offset);
-
-    const formattedMashups = userMashups.map(mashup => ({
-      id: mashup.id,
-      user_id: mashup.userId,
-      duration_seconds: mashup.targetDurationSeconds,
-      status: mashup.generationStatus,
-      output_path: mashup.outputStorageUrl,
-      playback_path: mashup.publicPlaybackUrl,
-      output_format: mashup.outputFormat,
-      playback_format:
-        mashup.recommendationContext && typeof mashup.recommendationContext === 'object'
-          ? (
-              ((mashup.recommendationContext as Record<string, unknown>).outputVariants as
-                | { playback?: { format?: string } }
-                | undefined)?.playback?.format ?? 'mp3'
-            )
-          : 'mp3',
-      generation_time_ms: mashup.generationTimeMs,
-      render_qa:
-        mashup.recommendationContext && typeof mashup.recommendationContext === 'object'
-          ? (mashup.recommendationContext as Record<string, unknown>).renderQa ?? null
-          : null,
-      playback_count: mashup.playbackCount,
-      download_count: mashup.downloadCount,
-      is_public: mashup.isPublic,
-      public_slug: mashup.publicSlug,
-      parent_mashup_id: mashup.parentMashupId,
-      created_at: mashup.createdAt,
-      updated_at: mashup.updatedAt,
-    }));
-
-    const response = NextResponse.json({
-      page,
-      limit,
-      total: totalCount.count,
-      data: formattedMashups,
-    });
+    const response = NextResponse.json(mashupList);
     response.headers.set('Cache-Control', cacheControl);
     return response;
   } catch (error) {

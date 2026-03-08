@@ -42,9 +42,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     await ensureStemsQuality(user.id, quality);
 
-    void enqueueStems({ type: 'stems', trackId, quality });
+    const queueReceipt = await enqueueStems({ type: 'stems', trackId, quality });
 
-    return NextResponse.json({ status: 'accepted', quality });
+    return NextResponse.json({
+      status: 'accepted',
+      quality,
+      automation_job_id: queueReceipt.jobId,
+      queue_driver: queueReceipt.driver,
+    });
   } catch (error) {
     if (error instanceof AuthenticationError) {
       return NextResponse.json({ error: error.message, code: 'AUTHENTICATION_ERROR' }, { status: 401 });

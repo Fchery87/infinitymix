@@ -2,33 +2,12 @@ import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
 import path from 'path';
 import os from 'os';
 import { log } from '@/lib/logger';
-
-export interface AudioWorkerJob {
-  id: string;
-  type: 'analysis' | 'mixing' | 'stems' | 'auto-dj';
-  input: {
-    buffer?: Buffer;
-    filePath?: string;
-    config: Record<string, unknown>;
-  };
-  priority: number;
-  createdAt: number;
-}
-
-export interface AudioWorkerResult {
-  jobId: string;
-  success: boolean;
-  data?: unknown;
-  error?: string;
-  duration: number;
-}
-
-export interface AudioWorkerProgress {
-  jobId: string;
-  progress: number;
-  stage: string;
-  message?: string;
-}
+import {
+  createAutomationWorkerJob,
+  type AutomationWorkerJob,
+  type AutomationWorkerProgress,
+  type AutomationWorkerResult,
+} from '@/lib/runtime/contracts';
 
 interface WorkerInstance {
   worker: Worker;
@@ -38,11 +17,11 @@ interface WorkerInstance {
 
 const MAX_WORKERS = Math.min(4, Math.max(1, Math.floor(os.cpus().length / 2)));
 const workers: WorkerInstance[] = [];
-const jobQueue: AudioWorkerJob[] = [];
+const jobQueue: AutomationWorkerJob[] = [];
 const pendingJobs = new Map<string, {
-  resolve: (result: AudioWorkerResult) => void;
+  resolve: (result: AutomationWorkerResult) => void;
   reject: (error: Error) => void;
-  onProgress?: (progress: AudioWorkerProgress) => void;
+  onProgress?: (progress: AutomationWorkerProgress) => void;
 }>();
 
 let isInitialized = false;
@@ -59,7 +38,7 @@ function initializeWorkers(): void {
         workerData: { workerId: i },
       });
 
-      worker.on('message', (message: AudioWorkerResult | AudioWorkerProgress) => {
+      worker.on('message', (message: AutomationWorkerResult | AutomationWorkerProgress) => {
         if ('progress' in message) {
           const pending = pendingJobs.get(message.jobId);
           if (pending?.onProgress) {
@@ -134,19 +113,14 @@ function processQueue(): void {
 }
 
 export function submitAudioJob(
-  job: Omit<AudioWorkerJob, 'id' | 'createdAt'>,
-  onProgress?: (progress: AudioWorkerProgress) => void
-): Promise<AudioWorkerResult> {
+  job: Omit<AutomationWorkerJob, 'id' | 'createdAt' | 'owner'>,
+  onProgress?: (progress: AutomationWorkerProgress) => void
+): Promise<AutomationWorkerResult> {
   if (!isInitialized) {
     initializeWorkers();
   }
-
-  const jobId = `${job.type}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const fullJob: AudioWorkerJob = {
-    ...job,
-    id: jobId,
-    createdAt: Date.now(),
-  };
+  const fullJob = createAutomationWorkerJob(job);
+  const jobId = fullJob.id;
 
   return new Promise((resolve, reject) => {
     pendingJobs.set(jobId, { resolve, reject, onProgress });

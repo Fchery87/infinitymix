@@ -85,7 +85,7 @@ async function getHandler(request: NextRequest) {
       .orderBy(uploadedTracks.createdAt);
 
     return NextResponse.json({
-      tracks: tracks.map(formatTrackResponse),
+      tracks: tracks.map((track) => formatTrackResponse(track)),
     });
     
   } catch (error) {

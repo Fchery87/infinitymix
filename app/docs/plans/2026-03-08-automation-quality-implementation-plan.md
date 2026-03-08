@@ -58,6 +58,63 @@ All phases in this plan should follow these constraints:
 - Separate annotation quality from planner quality from render quality in code and telemetry.
 - Evaluate changes against fixture sets and human-listening rubrics before expanding scope.
 - Avoid new UI surface area unless it reflects implemented engine behavior.
+- Maintain a single canonical storage, schema, and job contract across the app and any background services.
+- Do not treat in-memory or fire-and-forget execution as production-ready automation infrastructure.
+
+## Phase 0: Runtime Unification And Durable Execution
+
+Status: Complete on 2026-03-08
+
+### Goals
+
+- Establish one authoritative runtime contract for analysis, planning, rendering, and persistence.
+- Remove architectural drift between the app-side automation path and the background service path.
+- Make automation jobs durable, retryable, and observable before later quality phases depend on them.
+
+### Problems This Phase Solves
+
+- Current project paths do not share one canonical database and storage contract.
+- Some background services still reflect stale Prisma-era fields and shapes that do not match the current Drizzle schema.
+- In-memory queue execution is not reliable enough for an automation-first product with long-running audio work.
+
+### Tasks
+
+- [x] Decide and document the authoritative execution topology for production:
+- [x] app-only backend pipeline
+- [x] app plus background workers with shared contracts
+- [x] hybrid path only if responsibilities are explicitly separated
+- [x] Audit every current automation path that reads or writes tracks, mashups, plans, stems, or render outputs.
+- [x] Remove or migrate service code that depends on stale Prisma models or non-existent fields.
+- [x] Define a single typed contract for:
+- [x] track metadata
+- [x] analysis persistence
+- [x] planner outputs
+- [x] render outputs
+- [x] QA results
+- [x] job status transitions
+- [x] Unify storage access patterns so app and services use the same storage abstraction and asset naming expectations.
+- [x] Replace the in-memory queue path with durable job infrastructure that supports:
+- [x] persistence across restarts
+- [x] retry policies
+- [x] dead-letter or failure inspection
+- [x] progress/status updates
+- [x] bounded concurrency controls
+- [x] Add explicit idempotency and recovery rules for analysis, stem separation, preview generation, and final render jobs.
+- [x] Add architecture documentation that names the authoritative path and deprecates non-authoritative paths.
+
+### Deliverables
+
+- [x] One documented, authoritative automation runtime architecture
+- [x] Unified app/service contracts for persistence and storage
+- [x] Durable queue or worker execution model with retry and recovery semantics
+- [x] Removal, migration, or deprecation plan for stale service paths
+
+### Acceptance Criteria
+
+- [x] No production automation path depends on schema fields that do not exist in the current canonical database model.
+- [x] Analysis, planner, and render jobs survive process restarts and can be retried safely.
+- [x] Job status transitions and asset writes are observable and idempotent.
+- [x] Later phases can assume one authoritative execution path instead of parallel competing implementations.
 
 ## Phase 1: Analysis Contract And Annotation Fidelity
 
@@ -123,6 +180,7 @@ All phases in this plan should follow these constraints:
 
 - Current roadmap gaps are mostly signoff and evidence gaps.
 - Product decisions are ahead of the quality evidence needed to trust them.
+- Existing metrics in some paths are too weak or incorrect to function as release gates without cleanup.
 
 ### Tasks
 
@@ -145,6 +203,7 @@ All phases in this plan should follow these constraints:
 - [ ] stem artifact severity
 - [ ] loudness compliance
 - [ ] clipping and true peak
+- [ ] Audit and remove placeholder or invalid metrics before using them in signoff workflows.
 - [ ] Add fixture review workflows and scoring rubrics for human listening:
 - [ ] transition smoothness
 - [ ] musical coherence
@@ -179,6 +238,7 @@ All phases in this plan should follow these constraints:
 - Current recommendations are anchor-based, not sequence-aware.
 - Compatibility is treated too symmetrically for mashup and stem use cases.
 - Event-aware energy flow is underspecified.
+- Planner telemetry currently risks overstating real variant differences unless behavior branches are explicit.
 
 ### Tasks
 
@@ -211,6 +271,7 @@ All phases in this plan should follow these constraints:
 - [ ] cue-point choice
 - [ ] transition type choice
 - [ ] stem/full-track decision
+- [ ] Explicitly define the boundary between planner logic owned in `app/` and any worker-owned orchestration layer so planning does not diverge by runtime.
 
 ### Deliverables
 
@@ -237,6 +298,7 @@ All phases in this plan should follow these constraints:
 
 - Current preview is not sufficiently tied to the real plan.
 - Users can preview generic mixes without validating the actual transition choices they will export.
+- Polling-only status surfaces make it harder for users to trust long-running automation steps.
 
 ### Tasks
 
@@ -256,6 +318,10 @@ All phases in this plan should follow these constraints:
 - [ ] unsupported preview simplifications
 - [ ] Add tests that ensure preview requests are derived from the same planner output used for rendering.
 - [ ] Close remaining preview parity documentation and browser signoff gaps.
+- [ ] Add a durable progress/status delivery path for long-running generation jobs:
+- [ ] SSE or equivalent push path preferred
+- [ ] polling fallback only where needed
+- [ ] status vocabulary shared with the authoritative job system
 
 ### Deliverables
 
@@ -281,6 +347,7 @@ All phases in this plan should follow these constraints:
 
 - “Radio-ready” output needs stronger guarantees than loudness normalization alone.
 - The system needs to reject or retry renders that are technically acceptable but musically weak.
+- Current render/mix metrics are not yet strong enough to support hard release gates in all paths.
 
 ### Tasks
 
@@ -408,23 +475,25 @@ All phases in this plan should follow these constraints:
 
 ## Recommended Execution Order
 
-1. Phase 1: Analysis Contract And Annotation Fidelity
-2. Phase 2: Evaluation Harness And Quality Benchmarks
-3. Phase 3: Sequence Planner And Compatibility Engine
-4. Phase 4: Transition Execution Contract And Preview Truthfulness
-5. Phase 5: Render Quality Enforcement And Corrective Loop
-6. Phase 6: Product Surface Alignment
-7. Phase 7: Controlled Rollout And Learning Loop
+1. Phase 0: Runtime Unification And Durable Execution
+2. Phase 1: Analysis Contract And Annotation Fidelity
+3. Phase 2: Evaluation Harness And Quality Benchmarks
+4. Phase 3: Sequence Planner And Compatibility Engine
+5. Phase 4: Transition Execution Contract And Preview Truthfulness
+6. Phase 5: Render Quality Enforcement And Corrective Loop
+7. Phase 6: Product Surface Alignment
+8. Phase 7: Controlled Rollout And Learning Loop
 
 ## Suggested PR Breakdown
 
-1. Analysis contract, schema, and compatibility-preserving adapters
-2. Fixture expansion, benchmark scripts, and signoff workflow
-3. Sequence planner and asymmetric compatibility engine
-4. Shared transition contract and planned-transition preview
-5. Render QA expansion and corrective retry policies
-6. Create flow and project/stem product surface alignment
-7. Rollout instrumentation cleanup and variant dashboards
+1. Runtime architecture decision, shared contracts, and durable queue foundation
+2. Analysis contract, schema, and compatibility-preserving adapters
+3. Fixture expansion, benchmark scripts, and signoff workflow
+4. Sequence planner and asymmetric compatibility engine
+5. Shared transition contract, planned-transition preview, and job progress delivery
+6. Render QA expansion and corrective retry policies
+7. Create flow and project/stem product surface alignment
+8. Rollout instrumentation cleanup and variant dashboards
 
 ## Out Of Scope For This Plan
 
@@ -441,7 +510,8 @@ These items may still be valuable, but they are not the next investment for auto
 For the next implementation chat:
 
 - Start with this plan file
-- Begin with Phase 1 only
+- Begin with Phase 0 only
+- Confirm the authoritative runtime path before changing planner or render quality logic
 - Preserve backward compatibility where possible while introducing a richer analysis contract
 - Keep browser analysis optional and backend-authoritative
 - Require fixture-based evidence before promoting major planner or render changes

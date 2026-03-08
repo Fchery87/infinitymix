@@ -1,4 +1,4 @@
-import { Worker, Job, Queue } from 'bullmq'
+﻿import { Worker, Job, Queue } from 'bullmq'
 import { Redis } from 'ioredis'
 import { MashupPlanner } from './MashupPlanner'
 import { logger } from './utils/logger'
@@ -10,6 +10,7 @@ interface MashupGenerationJobData {
   duration: number
   userId: string
   plannerDebugTrace?: boolean
+  plannerVariant?: 'control' | 'candidate'
 }
 
 class WorkerService {
@@ -61,7 +62,7 @@ class WorkerService {
   }
 
   private async processMashupGenerationJob(job: Job<MashupGenerationJobData>) {
-    const { mashupId, trackIds, duration, userId, plannerDebugTrace } = job.data
+    const { mashupId, trackIds, duration, userId, plannerDebugTrace, plannerVariant } = job.data
     
     logger.info('Processing mashup generation job', {
       job: job.id,
@@ -84,7 +85,8 @@ class WorkerService {
         targetDuration: duration,
         userId,
         mashupId,
-        plannerDebugTrace
+        plannerDebugTrace,
+        plannerVariant
       })
 
       // Step 4: Save timeline plan and update master parameters
@@ -343,3 +345,6 @@ process.on('SIGTERM', async () => {
   await workerService.close()
   process.exit(0)
 })
+
+
+

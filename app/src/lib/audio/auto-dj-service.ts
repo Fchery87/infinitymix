@@ -18,7 +18,15 @@ export type { TransitionPreset } from './presets/transition-presets';
 
 const OUTPUT_SAMPLE_RATE = 44100;
 const OUTPUT_CHANNELS = 2;
-const OUTPUT_FORMAT = 'mp3';
+const MASTER_OUTPUT_FORMAT = 'wav';
+const PLAYBACK_OUTPUT_FORMAT = 'mp3';
+const PLAYBACK_OUTPUT_BITRATE = '320k';
+const TEMPO_RATIO_PREFERRED_MIN = 0.94;
+const TEMPO_RATIO_PREFERRED_MAX = 1.06;
+const TEMPO_RATIO_HARD_MIN = 0.9;
+const TEMPO_RATIO_HARD_MAX = 1.1;
+const MASTER_TRUE_PEAK_CEILING = -1.0;
+const MASTER_LIMITER_LEVEL_OUT = 0.98;
 
 /**
  * Find and configure FFmpeg path
@@ -337,6 +345,7 @@ export type AutoDjConfig = {
   enableBpmRestoration?: boolean; // Enable/disable gradual BPM restoration after transitions (default: true)
   bpmRestorationDurationSeconds?: number; // Duration of restoration ramp in seconds (default: 6)
   bpmRestorationMinRatio?: number; // Only restore if tempo ratio differs by at least this amount (default: 0.05)
+  plannerVariant?: 'control' | 'candidate';
 };
 
 type TrackPlaybackPlan = {
@@ -427,9 +436,32 @@ function median(values: number[]): number | null {
   return sorted[mid];
 }
 
-function clampTempoRatio(value: number) {
+export function clampTempoRatio(value: number) {
   if (!Number.isFinite(value) || value <= 0) return 1;
-  return Math.min(1.33, Math.max(0.75, Number(value.toFixed(3))));
+  return Math.min(
+    TEMPO_RATIO_HARD_MAX,
+    Math.max(TEMPO_RATIO_HARD_MIN, Number(value.toFixed(3)))
+  );
+}
+
+export function getTempoStretchPercent(tempoRatio: number) {
+  return Math.abs(1 - tempoRatio) * 100;
+}
+
+export function classifyTempoStretch(tempoRatio: number) {
+  if (
+    tempoRatio >= TEMPO_RATIO_PREFERRED_MIN &&
+    tempoRatio <= TEMPO_RATIO_PREFERRED_MAX
+  ) {
+    return 'preferred' as const;
+  }
+  if (
+    tempoRatio >= TEMPO_RATIO_HARD_MIN &&
+    tempoRatio <= TEMPO_RATIO_HARD_MAX
+  ) {
+    return 'tolerated' as const;
+  }
+  return 'rejected' as const;
 }
 
 function applyTempoRamp(
@@ -439,10 +471,75 @@ function applyTempoRamp(
   if (!rampSeconds || rampSeconds <= 0 || Math.abs(tempoRatio - 1) < 0.01) {
     return buildAtempoChain(tempoRatio);
   }
-  const clamped = Math.min(1.33, Math.max(0.75, tempoRatio));
+  const clamped = Math.min(
+    TEMPO_RATIO_HARD_MAX,
+    Math.max(TEMPO_RATIO_HARD_MIN, tempoRatio)
+  );
   return `atempo='1+(${clamped.toFixed(3)}-1)*min(t/${rampSeconds.toFixed(
     2
   )},1)'`;
+}
+
+function resolveOrderedTrackInfos(
+  trackInfos: TrackInfo[],
+  orderedTrackIds: string[]
+): TrackInfo[] {
+  return orderedTrackIds
+    .map((trackId) => trackInfos.find((track) => track.id === trackId))
+    .filter((track): track is TrackInfo => Boolean(track));
+}
+
+export function resolveAutoDjPlanTargetBpm(
+  trackInfos: TrackInfo[],
+  config: Pick<AutoDjConfig, 'targetBpm' | 'keepOrder' | 'trackIds'>
+): number {
+  if (config.targetBpm && Number.isFinite(config.targetBpm) && config.targetBpm > 0) {
+    return config.targetBpm;
+  }
+
+  if (config.keepOrder) {
+    const orderedTrackInfos = resolveOrderedTrackInfos(trackInfos, config.trackIds);
+    const firstTrackBpm = orderedTrackInfos[0]?.bpm
+      ? Number(orderedTrackInfos[0].bpm)
+      : null;
+    if (firstTrackBpm && Number.isFinite(firstTrackBpm) && firstTrackBpm > 0) {
+      return firstTrackBpm;
+    }
+  }
+
+  return median(trackInfos.map((t) => t.bpm || 0).filter(Boolean)) ?? 120;
+}
+
+async function transcodeBufferToPlaybackMp3(
+  inputBuffer: Buffer,
+  tempDir: string,
+  seed: string
+): Promise<Buffer> {
+  const tempFs = await import('fs/promises');
+  const inputPath = path.join(tempDir, `auto-dj-master-${seed}.wav`);
+  await tempFs.writeFile(inputPath, inputBuffer);
+
+  try {
+    const command = ffmpeg(inputPath);
+    command
+      .outputOptions([
+        `-ac ${OUTPUT_CHANNELS}`,
+        `-ar ${OUTPUT_SAMPLE_RATE}`,
+        `-b:a ${PLAYBACK_OUTPUT_BITRATE}`,
+      ])
+      .format(PLAYBACK_OUTPUT_FORMAT);
+
+    const chunks: Buffer[] = [];
+    return await new Promise<Buffer>((resolve, reject) => {
+      command.on('error', reject);
+      const out = command.pipe();
+      out.on('data', (chunk) => chunks.push(chunk));
+      out.on('end', () => resolve(Buffer.concat(chunks)));
+      out.on('error', reject);
+    });
+  } finally {
+    await tempFs.unlink(inputPath).catch(() => {});
+  }
 }
 
 /**
@@ -1049,6 +1146,8 @@ function scoreMixQuality(
   trackInfos: TrackInfo[],
   targetBpm: number
 ): MixQualityReport {
+  let toleratedStretchTransitions = 0;
+
   const transitionScores = plan.transitions.map((t, idx) => {
     let score = 100;
     const issues: string[] = [];
@@ -1075,9 +1174,29 @@ function scoreMixQuality(
     const fromBpm = from?.bpm ?? targetBpm;
     const toBpm = to?.bpm ?? targetBpm;
     const bpmDiff = Math.abs((fromBpm || targetBpm) - (toBpm || targetBpm));
+    const fromRatio = clampTempoRatio(calculateTempoRatio(fromBpm, targetBpm));
+    const toRatio = clampTempoRatio(calculateTempoRatio(toBpm, targetBpm));
+    const fromStretchClass = classifyTempoStretch(fromRatio);
+    const toStretchClass = classifyTempoStretch(toRatio);
+    const maxStretchPercent = Math.max(
+      getTempoStretchPercent(fromRatio),
+      getTempoStretchPercent(toRatio)
+    );
+
     if (bpmDiff > 10) {
       score -= 10;
       issues.push('High BPM delta between tracks');
+    }
+    if (fromStretchClass === 'tolerated' || toStretchClass === 'tolerated') {
+      toleratedStretchTransitions += 1;
+      score -= 12;
+      issues.push(
+        `Noticeable tempo stretch required (${maxStretchPercent.toFixed(1)}%)`
+      );
+    }
+    if (maxStretchPercent > 8) {
+      score -= 10;
+      issues.push('Transition sits near the stretch quality ceiling');
     }
 
     const genre = checkGenreCompatibility(
@@ -1106,6 +1225,20 @@ function scoreMixQuality(
     suggestions.push('Re-run with phrase alignment enforced');
   if (transitionScores.some((t) => t.issues.some((i) => i.includes('Genre'))))
     suggestions.push('Consider adjacent-genre ordering');
+  if (
+    transitionScores.some((t) =>
+      t.issues.some((i) => i.includes('tempo stretch'))
+    )
+  ) {
+    suggestions.push(
+      'Reduce tempo stretch by choosing closer BPM tracks or locking the opening track BPM'
+    );
+  }
+  if (toleratedStretchTransitions > 1) {
+    suggestions.push(
+      'Multiple transitions require audible stretching; prefer a tighter BPM cluster'
+    );
+  }
 
   return { overallScore, transitionScores, suggestions };
 }
@@ -1198,6 +1331,25 @@ export function buildVocalDuckFilter(config: VocalDuckConfig): string {
   const combinedCurve = `1-${duckAmount}*min(t/${duckDuration},1)+${duckAmount}*min(max(t-${duckDuration},0)/${releaseDuration},1)`;
 
   return `volume=${combinedCurve}`;
+}
+
+function buildOutgoingOverlapMaskingEffects(
+  duration: number,
+  vocalCollision?: VocalCollision
+) {
+  const effects = [
+    // Gently clear outgoing low-end during the overlap so the incoming track
+    // can take over the groove without a muddy bass pileup.
+    `highpass=f=120:p=1`,
+  ];
+
+  if (vocalCollision?.severity === 'major') {
+    effects.push(`equalizer=f=2400:t=h:width=1400:g=-3`);
+  } else if (vocalCollision?.severity === 'minor') {
+    effects.push(`equalizer=f=2400:t=h:width=1200:g=-1.5`);
+  }
+
+  return effects;
 }
 
 /**
@@ -1405,9 +1557,9 @@ export async function renderTransitionPreview(
         `-ac ${OUTPUT_CHANNELS}`,
         `-ar ${OUTPUT_SAMPLE_RATE}`,
         `-t ${previewDuration}`,
-        '-b:a 192k',
+        `-b:a ${PLAYBACK_OUTPUT_BITRATE}`,
       ])
-      .format(OUTPUT_FORMAT);
+      .format(PLAYBACK_OUTPUT_FORMAT);
 
     const chunks: Buffer[] = [];
     const buffer = await new Promise<Buffer>((resolve, reject) => {
@@ -1423,7 +1575,7 @@ export async function renderTransitionPreview(
 
     const url = await storage.uploadFile(
       buffer,
-      `preview-${config.trackAId}-${config.trackBId}.${OUTPUT_FORMAT}`,
+      `preview-${config.trackAId}-${config.trackBId}.${PLAYBACK_OUTPUT_FORMAT}`,
       'audio/mpeg'
     );
     return {
@@ -1442,10 +1594,7 @@ export async function planAutoDjMix(
 ): Promise<AutoDjPlan> {
   const transitionStyle = config.transitionStyle ?? 'smooth';
   const preset = CROSSFADE_PRESETS[transitionStyle];
-  const targetBpm =
-    config.targetBpm ??
-    median(trackInfos.map((t) => t.bpm || 0).filter(Boolean)) ??
-    120;
+  const targetBpm = resolveAutoDjPlanTargetBpm(trackInfos, config);
   const cueCache = new Map<string, AutoCuePoints>();
 
   let ordered = config.keepOrder
@@ -1632,12 +1781,27 @@ export async function renderAutoDjMix(
     }
   }
 
+  const existingMashup = await db
+    .select({ recommendationContext: mashups.recommendationContext })
+    .from(mashups)
+    .where(eq(mashups.id, mashupId))
+    .limit(1);
+  const existingRecommendationContext =
+    existingMashup[0]?.recommendationContext &&
+    typeof existingMashup[0].recommendationContext === 'object'
+      ? (existingMashup[0].recommendationContext as Record<string, unknown>)
+      : {};
+
   await db
     .update(mashups)
     .set({
       generationStatus: 'generating',
       mixMode: 'standard',
-      recommendationContext: { plan, request: config },
+      recommendationContext: {
+        ...existingRecommendationContext,
+        plan,
+        request: config,
+      },
       updatedAt: new Date(),
     })
     .where(eq(mashups.id, mashupId));
@@ -1667,6 +1831,11 @@ export async function renderAutoDjMix(
 
     const filters: string[] = [];
     const targetBpm = plan.targetBpm;
+    const explicitTargetBpm =
+      config.targetBpm && Number.isFinite(config.targetBpm) && config.targetBpm > 0
+        ? config.targetBpm
+        : null;
+    const loudnessMode = config.loudnessNormalization ?? 'peak';
     const fallbackDuration = Math.max(
       30,
       config.targetDurationSeconds / Math.max(1, orderedBuffers.length)
@@ -1708,8 +1877,8 @@ export async function renderAutoDjMix(
           config.enableBpmRestoration !== false && !config.tempoRampSeconds;
         let effectiveTargetBpm: number;
         if (idx === 0) {
-          // First track: use global target BPM
-          effectiveTargetBpm = targetBpm;
+          // Anchor the opening track unless the user explicitly requests a global BPM.
+          effectiveTargetBpm = explicitTargetBpm ?? bpm;
         } else if (bpmRestorationEnabled) {
           // Subsequent tracks with restoration enabled: match to previous track's ORIGINAL BPM
           const prevTrackInfo = trackInfos.find((t) => t.id === orderedBuffers[idx - 1].id);
@@ -1721,6 +1890,8 @@ export async function renderAutoDjMix(
         }
 
         const tempoRatio = clampTempoRatio(calculateTempoRatio(bpm, effectiveTargetBpm));
+        const stretchPercent = getTempoStretchPercent(tempoRatio);
+        const stretchClass = classifyTempoStretch(tempoRatio);
 
         // Log BPM matching decision
         log('info', 'autoDj.bpm.matching', {
@@ -1729,7 +1900,16 @@ export async function renderAutoDjMix(
           originalBpm: bpm,
           effectiveTargetBpm,
           tempoRatio: Number(tempoRatio.toFixed(4)),
-          matchingTo: idx === 0 ? 'global-target' : bpmRestorationEnabled ? 'previous-track-original' : 'global-target'
+          stretchPercent: Number(stretchPercent.toFixed(2)),
+          stretchClass,
+          matchingTo:
+            idx === 0
+              ? explicitTargetBpm
+                ? 'explicit-target'
+                : 'opening-track-original'
+              : bpmRestorationEnabled
+                ? 'previous-track-original'
+                : 'global-target',
         });
         const rawDuration = info?.durationSeconds
           ? Number(info.durationSeconds)
@@ -1877,11 +2057,9 @@ export async function renderAutoDjMix(
         bpmRestorationEnabled
       );
 
-      // Initial loudness normalization (pre-processing)
+      // Keep per-track preprocessing transparent. Final mastering happens after the mix.
       const normLabel = `norm${idx}`;
-      filters.push(
-        `[${idx}:a]loudnorm=I=-14:TP=-1:LRA=11[${normLabel}]`
-      );
+      filters.push(`[${idx}:a]anull[${normLabel}]`);
 
       // Apply base tempo adjustment
       const tempoLabel = `tempo${idx}`;
@@ -1943,6 +2121,13 @@ export async function renderAutoDjMix(
         const style = transitionForThisTrack.style;
         const duration = trackPlan.fadeOutDuration;
         const effectDuration = Math.max(0.5, duration);
+
+        transitionEffects.push(
+          ...buildOutgoingOverlapMaskingEffects(
+            effectDuration,
+            transitionForThisTrack.vocalCollision
+          )
+        );
 
         switch (style) {
           case 'backspin':
@@ -2189,17 +2374,21 @@ export async function renderAutoDjMix(
     }
 
     // Loudness normalization (two-pass style)
-    if (config.loudnessNormalization === 'ebu_r128') {
+    if (loudnessMode === 'ebu_r128') {
       const target = config.targetLoudness ?? -23;
       finalFilters.push(
-        `loudnorm=I=${target}:TP=-1.5:LRA=11:print_format=summary`
+        `loudnorm=I=${target}:TP=${MASTER_TRUE_PEAK_CEILING}:LRA=9:print_format=summary`
       );
-    } else if (config.loudnessNormalization === 'peak') {
-      finalFilters.push(`loudnorm=TP=-1.5:I=-14:LRA=11`);
+    } else if (loudnessMode === 'peak') {
+      finalFilters.push(
+        `loudnorm=TP=${MASTER_TRUE_PEAK_CEILING}:I=-14:LRA=9`
+      );
     }
 
     // Final limiter to prevent clipping
-    finalFilters.push(`alimiter=level_in=1:level_out=0.95`);
+    finalFilters.push(
+      `alimiter=level_in=1:level_out=${MASTER_LIMITER_LEVEL_OUT}`
+    );
 
     // Apply final filters
     if (finalFilters.length > 0) {
@@ -2207,7 +2396,11 @@ export async function renderAutoDjMix(
       filters.push(`[mixed]${finalFilter}[final]`);
     }
 
-    const executeMix = async (filterGraph: string[], duration: number) => {
+    const executeMix = async (
+      filterGraph: string[],
+      duration: number,
+      format: 'wav' | 'mp3'
+    ) => {
       const cmd = ffmpeg();
       tempFiles.forEach((file) => cmd.input(file));
 
@@ -2217,13 +2410,15 @@ export async function renderAutoDjMix(
 
       cmd
         .complexFilter(filterGraph, outputLabel)
-        .outputOptions([
-          `-ac ${OUTPUT_CHANNELS}`,
-          `-ar ${OUTPUT_SAMPLE_RATE}`,
-          `-t ${duration}`,
-          '-b:a 192k',
-        ])
-        .format(OUTPUT_FORMAT);
+        .outputOptions(
+          [
+            `-ac ${OUTPUT_CHANNELS}`,
+            `-ar ${OUTPUT_SAMPLE_RATE}`,
+            `-t ${duration}`,
+            format === 'mp3' ? `-b:a ${PLAYBACK_OUTPUT_BITRATE}` : null,
+          ].filter((option): option is string => Boolean(option))
+        )
+        .format(format);
       const chunks: Buffer[] = [];
       return new Promise<Buffer>((resolve, reject) => {
         cmd.on('start', (cmdline) => {
@@ -2294,20 +2489,20 @@ export async function renderAutoDjMix(
 
       // Add final processing to fallback
       let fallbackFinalInput = fallbackInputLabel;
-      if (config.loudnessNormalization === 'ebu_r128') {
+      if (loudnessMode === 'ebu_r128') {
         const target = config.targetLoudness ?? -23;
         fallbackFilters.push(
-          `[${fallbackInputLabel}]loudnorm=I=${target}:TP=-1.5:LRA=11[fallback_norm]`
+          `[${fallbackInputLabel}]loudnorm=I=${target}:TP=${MASTER_TRUE_PEAK_CEILING}:LRA=9[fallback_norm]`
         );
         fallbackFinalInput = 'fallback_norm';
-      } else if (config.loudnessNormalization === 'peak') {
+      } else if (loudnessMode === 'peak') {
         fallbackFilters.push(
-          `[${fallbackInputLabel}]loudnorm=TP=-1.5:I=-14:LRA=11[fallback_norm]`
+          `[${fallbackInputLabel}]loudnorm=TP=${MASTER_TRUE_PEAK_CEILING}:I=-14:LRA=9[fallback_norm]`
         );
         fallbackFinalInput = 'fallback_norm';
       }
       fallbackFilters.push(
-        `[${fallbackFinalInput}]alimiter=level_in=1:level_out=0.95[final]`
+        `[${fallbackFinalInput}]alimiter=level_in=1:level_out=${MASTER_LIMITER_LEVEL_OUT}[final]`
       );
 
       return fallbackFilters;
@@ -2315,22 +2510,40 @@ export async function renderAutoDjMix(
 
     let result: Buffer | null = null;
     try {
-      result = await executeMix(filters, safeDuration);
+      result = await executeMix(filters, safeDuration, MASTER_OUTPUT_FORMAT);
     } catch (error) {
       log('warn', 'autoDj.ffmpeg.fallback', {
         error: (error as Error).message,
       });
       const fallbackFilters = buildFallbackFilters();
-      result = await executeMix(fallbackFilters, safeDuration);
+      result = await executeMix(
+        fallbackFilters,
+        safeDuration,
+        MASTER_OUTPUT_FORMAT
+      );
     }
 
     if (!result || result.length === 0) {
       throw new Error('Auto DJ render produced empty output');
     }
 
+    const playbackBuffer = await transcodeBufferToPlaybackMp3(
+      result,
+      tempDir,
+      mashupId
+    );
+    if (!playbackBuffer.length) {
+      throw new Error('Auto DJ playback derivative produced empty output');
+    }
+
     const outputUrl = await storage.uploadFile(
       result,
-      `${mashupId}.${OUTPUT_FORMAT}`,
+      `${mashupId}.${MASTER_OUTPUT_FORMAT}`,
+      'audio/wav'
+    );
+    const playbackUrl = await storage.uploadFile(
+      playbackBuffer,
+      `${mashupId}-playback.${PLAYBACK_OUTPUT_FORMAT}`,
       'audio/mpeg'
     );
     const processingTime = Date.now() - startedAt;
@@ -2340,10 +2553,34 @@ export async function renderAutoDjMix(
       .set({
         generationStatus: 'completed',
         outputStorageUrl: outputUrl,
-        publicPlaybackUrl: outputUrl,
-        outputFormat: OUTPUT_FORMAT,
+        publicPlaybackUrl: playbackUrl,
+        outputFormat: MASTER_OUTPUT_FORMAT,
         generationTimeMs: processingTime,
         mixMode: 'standard',
+        recommendationContext: {
+          ...existingRecommendationContext,
+          plan,
+          request: config,
+          outputVariants: {
+            master: {
+              storageUrl: outputUrl,
+              format: MASTER_OUTPUT_FORMAT,
+              mimeType: 'audio/wav',
+            },
+            playback: {
+              storageUrl: playbackUrl,
+              format: PLAYBACK_OUTPUT_FORMAT,
+              mimeType: 'audio/mpeg',
+              bitrate: PLAYBACK_OUTPUT_BITRATE,
+            },
+          },
+          renderTelemetry: {
+            renderDurationMs: processingTime,
+            renderedAt: new Date().toISOString(),
+            trackCount: config.trackIds.length,
+            usedPrecomputedPlan: Boolean(config.plan),
+          },
+        },
         updatedAt: new Date(),
       })
       .where(eq(mashups.id, mashupId));
@@ -2356,7 +2593,22 @@ export async function renderAutoDjMix(
     handleAsyncError(error as Error, 'renderAutoDjMix');
     await db
       .update(mashups)
-      .set({ generationStatus: 'failed', updatedAt: new Date() })
+      .set({
+        generationStatus: 'failed',
+        recommendationContext: {
+          ...existingRecommendationContext,
+          plan: config.plan ?? null,
+          request: config,
+          renderTelemetry: {
+            renderDurationMs: Date.now() - startedAt,
+            failedAt: new Date().toISOString(),
+            trackCount: config.trackIds.length,
+            usedPrecomputedPlan: Boolean(config.plan),
+            error: (error as Error).message,
+          },
+        },
+        updatedAt: new Date(),
+      })
       .where(eq(mashups.id, mashupId));
     throw error;
   } finally {

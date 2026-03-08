@@ -11,6 +11,7 @@ import { Readable } from 'node:stream';
 import { YIN } from 'pitchfinder';
 import type { BrowserAnalysisHint } from '@/lib/audio/types/analysis';
 import { getAudioPipelineFeatureFlags } from '@/lib/audio/feature-flags';
+import { getBrowserHintThresholds } from '@/lib/audio/browser-hint-thresholds';
 
 const TARGET_SAMPLE_RATE = 44100;
 const ANALYSIS_VERSION = 'phase2-v1';
@@ -403,10 +404,6 @@ type BrowserHintDecisionReason =
   | 'low_key_confidence'
   | 'analysis_failed';
 
-const BROWSER_HINT_CONFIDENCE_THRESHOLD = 0.7;
-const BROWSER_HINT_TEMPO_CONFIDENCE_THRESHOLD = 0.65;
-const BROWSER_HINT_KEY_CONFIDENCE_THRESHOLD = 0.5;
-
 function isBrowserAnalysisHint(value: unknown): value is BrowserAnalysisHint {
   if (!value || typeof value !== 'object') return false;
   const hint = value as Partial<BrowserAnalysisHint>;
@@ -423,9 +420,10 @@ function isBrowserAnalysisHint(value: unknown): value is BrowserAnalysisHint {
 function shouldUseBrowserHint(hint: BrowserAnalysisHint | undefined) {
   if (!hint) return false;
   if (hint.source !== 'browser-worker') return false;
-  if ((hint.confidence.overall ?? 0) < BROWSER_HINT_CONFIDENCE_THRESHOLD) return false;
-  if (hint.bpm == null || (hint.bpmConfidence ?? 0) < BROWSER_HINT_TEMPO_CONFIDENCE_THRESHOLD) return false;
-  if (!hint.keySignature || (hint.keyConfidence ?? 0) < BROWSER_HINT_KEY_CONFIDENCE_THRESHOLD) return false;
+  const thresholds = getBrowserHintThresholds();
+  if ((hint.confidence.overall ?? 0) < thresholds.overallConfidence) return false;
+  if (hint.bpm == null || (hint.bpmConfidence ?? 0) < thresholds.bpmConfidence) return false;
+  if (!hint.keySignature || (hint.keyConfidence ?? 0) < thresholds.keyConfidence) return false;
   return true;
 }
 
@@ -433,21 +431,22 @@ function getBrowserHintDecisionReason(
   browserAnalysisHint: unknown,
   browserAnalysisWorkerEnabled: boolean
 ): BrowserHintDecisionReason {
+  const thresholds = getBrowserHintThresholds();
   if (!browserAnalysisWorkerEnabled) {
     return browserAnalysisHint == null ? 'feature_disabled' : 'feature_disabled';
   }
   if (browserAnalysisHint == null) return 'no_browser_hint';
   if (!isBrowserAnalysisHint(browserAnalysisHint)) return 'invalid_browser_hint';
   const hint = browserAnalysisHint;
-  if ((hint.confidence.overall ?? 0) < BROWSER_HINT_CONFIDENCE_THRESHOLD) {
+  if ((hint.confidence.overall ?? 0) < thresholds.overallConfidence) {
     return 'low_overall_confidence';
   }
   if (hint.bpm == null) return 'missing_bpm';
-  if ((hint.bpmConfidence ?? 0) < BROWSER_HINT_TEMPO_CONFIDENCE_THRESHOLD) {
+  if ((hint.bpmConfidence ?? 0) < thresholds.bpmConfidence) {
     return 'low_bpm_confidence';
   }
   if (!hint.keySignature) return 'missing_key';
-  if ((hint.keyConfidence ?? 0) < BROWSER_HINT_KEY_CONFIDENCE_THRESHOLD) {
+  if ((hint.keyConfidence ?? 0) < thresholds.keyConfidence) {
     return 'low_key_confidence';
   }
   return 'accepted';
@@ -569,9 +568,12 @@ export async function startTrackAnalysis({
         keySignature: result.keySignature,
         camelotKey: result.camelotKey,
         keyConfidence: result.keyConfidence !== null ? result.keyConfidence.toString() : null,
-        browserAnalysisConfidence: null,
+        browserAnalysisConfidence:
+          validBrowserHint?.confidence?.overall != null
+            ? validBrowserHint.confidence.overall.toString()
+            : null,
         browserHintDecisionReason: browserHintDecisionReason,
-        analysisFeatures: null,
+        analysisFeatures: validBrowserHint?.analysisFeatures ?? null,
         durationSeconds: result.durationSeconds !== null ? result.durationSeconds.toString() : null,
         hasStems: result.hasStems,
         beatGrid: result.beatGrid,
@@ -599,9 +601,7 @@ export async function startTrackAnalysis({
 }
 
 export const __testables = {
-  BROWSER_HINT_CONFIDENCE_THRESHOLD,
-  BROWSER_HINT_TEMPO_CONFIDENCE_THRESHOLD,
-  BROWSER_HINT_KEY_CONFIDENCE_THRESHOLD,
+  getBrowserHintThresholds,
   camelotFromKeySignature,
   isBrowserAnalysisHint,
   shouldUseBrowserHint,

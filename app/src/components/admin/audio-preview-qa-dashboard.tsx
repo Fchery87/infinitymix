@@ -2,18 +2,30 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { RefreshCw, Trash2 } from 'lucide-react';
+import { Download, RefreshCw, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
+  exportPreviewQaTelemetryStore,
   getPreviewQaTelemetryStore,
   resetPreviewQaTelemetryStore,
   type PreviewQaStore,
 } from '@/lib/audio/preview-qa-telemetry';
+import { evaluatePreviewQaSignoff } from '@/lib/audio/preview-qa-signoff';
 
 function pct(num: number, den: number) {
   if (!den) return '0%';
   return `${Math.round((num / den) * 100)}%`;
+}
+
+function downloadTextFile(fileName: string, contents: string) {
+  const blob = new Blob([contents], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 export function AudioPreviewQaDashboard() {
@@ -50,6 +62,7 @@ export function AudioPreviewQaDashboard() {
         .sort((a, b) => b.record.lastSeenAt - a.record.lastSeenAt),
     [store]
   );
+  const signoff = useMemo(() => evaluatePreviewQaSignoff(store), [store]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -72,6 +85,17 @@ export function AudioPreviewQaDashboard() {
             <Button
               variant="outline"
               onClick={() => {
+                const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+                downloadTextFile(`imx-phase2-preview-qa-${stamp}.json`, exportPreviewQaTelemetryStore());
+              }}
+              className="border-white/10 bg-black/20"
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Export JSON
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
                 resetPreviewQaTelemetryStore();
                 refresh();
               }}
@@ -82,6 +106,55 @@ export function AudioPreviewQaDashboard() {
             </Button>
           </div>
         </div>
+
+        <Card className="bg-card/60">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg text-white">Phase 2 Browser Signoff</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+              <div className="text-sm text-gray-400">Overall Result</div>
+              <div className={signoff.overallPassed ? 'text-lg font-semibold text-emerald-300' : 'text-lg font-semibold text-amber-300'}>
+                {signoff.overallPassed ? 'Pass' : 'Incomplete'}
+              </div>
+              <p className="mt-2 text-xs text-gray-400">
+                A browser passes if preview starts cleanly with no recorded failures, or if fallback is observed without blocking errors.
+              </p>
+              <p className="mt-2 text-xs text-gray-500">
+                Export the local JSON evidence from this page and feed it into the Phase 2 signoff report script.
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              {signoff.browsers.map((browser) => (
+                <div key={browser.browser} className="rounded-xl border border-white/10 bg-black/20 p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-medium text-white">{browser.browser}</div>
+                    <div
+                      className={
+                        browser.status === 'pass'
+                          ? 'text-xs font-medium text-emerald-300'
+                          : browser.status === 'pass_with_fallback'
+                            ? 'text-xs font-medium text-sky-300'
+                            : browser.status === 'fail'
+                              ? 'text-xs font-medium text-red-300'
+                              : 'text-xs font-medium text-amber-300'
+                      }
+                    >
+                      {browser.status}
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-1 text-xs text-gray-300">
+                    <div>Capability signals: {browser.capabilitySignals}</div>
+                    <div>Unavailable: {browser.unavailable}</div>
+                    <div>Preview started: {browser.previewStarted}</div>
+                    <div>Preview failed: {browser.previewFailed}</div>
+                  </div>
+                  <p className="mt-3 text-xs text-gray-400">{browser.reason}</p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
 
         <Card className="bg-card/60">
           <CardHeader className="pb-3">

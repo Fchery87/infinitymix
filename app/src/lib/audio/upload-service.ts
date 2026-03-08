@@ -90,6 +90,57 @@ export async function processSingleUpload(
   return formatTrackResponse(track);
 }
 
+export async function finalizeUploadedBuffer(params: {
+  userId: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  buffer: Buffer;
+  projectId?: string | null;
+  browserAnalysisHint?: BrowserAnalysisHint | null;
+}): Promise<UploadedTrackResponse> {
+  if (!ALLOWED_TYPES.includes(params.contentType)) {
+    throw new ValidationError(`Unsupported file type: ${params.contentType}`);
+  }
+
+  if (params.size > MAX_FILE_SIZE_BYTES) {
+    throw new ValidationError(`File ${params.filename} exceeds 50MB limit`);
+  }
+
+  const storage = await getStorage();
+  const storageUrl = await storage.uploadFile(
+    params.buffer,
+    `${params.userId}/${Date.now()}-${params.filename}`,
+    params.contentType
+  );
+
+  const [track] = await db
+    .insert(uploadedTracks)
+    .values({
+      userId: params.userId,
+      originalFilename: params.filename,
+      storageUrl,
+      fileSizeBytes: params.size,
+      mimeType: params.contentType,
+      uploadStatus: 'uploaded',
+      analysisStatus: 'pending',
+      projectId: params.projectId || null,
+    })
+    .returning();
+
+  void enqueueAnalysis({
+    type: 'analysis',
+    trackId: track.id,
+    buffer: params.buffer,
+    storageUrl,
+    mimeType: params.contentType,
+    fileName: params.filename,
+    browserAnalysisHint: params.browserAnalysisHint ?? undefined,
+  });
+
+  return formatTrackResponse(track);
+}
+
 export function parseBrowserAnalysisHintsInput(raw: FormDataEntryValue | null): BrowserAnalysisHint[] {
   if (!raw || typeof raw !== 'string') return [];
   try {

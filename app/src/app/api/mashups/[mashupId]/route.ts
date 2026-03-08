@@ -22,8 +22,10 @@ export async function GET(
         targetDurationSeconds: mashups.targetDurationSeconds,
         generationStatus: mashups.generationStatus,
         outputStorageUrl: mashups.outputStorageUrl,
+        publicPlaybackUrl: mashups.publicPlaybackUrl,
         outputFormat: mashups.outputFormat,
         generationTimeMs: mashups.generationTimeMs,
+        recommendationContext: mashups.recommendationContext,
         playbackCount: mashups.playbackCount,
         downloadCount: mashups.downloadCount,
         createdAt: mashups.createdAt,
@@ -52,8 +54,21 @@ export async function GET(
       duration_seconds: mashup.targetDurationSeconds,
       status: mashup.generationStatus,
       output_path: mashup.outputStorageUrl,
+      playback_path: mashup.publicPlaybackUrl,
       output_format: mashup.outputFormat,
+      playback_format:
+        mashup.recommendationContext && typeof mashup.recommendationContext === 'object'
+          ? (
+              ((mashup.recommendationContext as Record<string, unknown>).outputVariants as
+                | { playback?: { format?: string } }
+                | undefined)?.playback?.format ?? 'mp3'
+            )
+          : 'mp3',
       generation_time_ms: mashup.generationTimeMs,
+      render_qa:
+        mashup.recommendationContext && typeof mashup.recommendationContext === 'object'
+          ? (mashup.recommendationContext as Record<string, unknown>).renderQa ?? null
+          : null,
       playback_count: mashup.playbackCount,
       download_count: mashup.downloadCount,
       created_at: mashup.createdAt,
@@ -80,6 +95,7 @@ export async function DELETE(
       .select({ 
         id: mashups.id, 
         outputStorageUrl: mashups.outputStorageUrl,
+        publicPlaybackUrl: mashups.publicPlaybackUrl,
         previewStorageUrl: mashups.previewStorageUrl,
       })
       .from(mashups)
@@ -102,6 +118,22 @@ export async function DELETE(
           mashupId, 
           url: mashup.outputStorageUrl,
           error: (error as Error).message 
+        });
+      }
+    }
+
+    if (mashup.publicPlaybackUrl) {
+      try {
+        await storage.deleteFile(mashup.publicPlaybackUrl);
+        log('info', 'storage.delete.mashup.playback', {
+          mashupId,
+          url: mashup.publicPlaybackUrl,
+        });
+      } catch (error) {
+        log('warn', 'storage.delete.mashup.playback.failed', {
+          mashupId,
+          url: mashup.publicPlaybackUrl,
+          error: (error as Error).message,
         });
       }
     }

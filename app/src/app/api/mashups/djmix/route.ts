@@ -10,6 +10,8 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { renderAutoDjMix, planAutoDjMix } from '@/lib/audio/auto-dj-service';
 import { withRateLimit, mashupGenerateRateLimit, generalApiRateLimit } from '@/lib/utils/rate-limiting';
 import { applyStylePackToAutoDjRequest, getBuiltInStylePackById, listBuiltInStylePackSummaries, validateStylePack, type StylePack } from '@/lib/styles';
+import { assignAudioRolloutVariant, getAudioRolloutConfigs } from '@/lib/audio/rollouts';
+import { getAudioRolloutOverrides } from '@/lib/audio/rollout-overrides';
 
 const withMashupRateLimit = withRateLimit(mashupGenerateRateLimit);
 const withGeneralRateLimit = withRateLimit(generalApiRateLimit);
@@ -282,7 +284,7 @@ async function handlePost(request: NextRequest) {
         name: mashupName,
         targetDurationSeconds: Math.round(parsed.targetDurationSeconds),
         generationStatus: 'pending',
-        outputFormat: 'mp3',
+        outputFormat: 'wav',
         isPublic: false,
         mixMode: 'standard',
         targetBpm: parsed.targetBpm ? parsed.targetBpm.toString() : null,
@@ -296,6 +298,15 @@ async function handlePost(request: NextRequest) {
 
     const relations = parsed.trackIds.map((trackId) => ({ mashupId: mashup.id, uploadedTrackId: trackId }));
     await db.insert(mashupInputTracks).values(relations);
+
+    const rolloutConfigs = getAudioRolloutConfigs();
+    const rolloutOverrides = await getAudioRolloutOverrides();
+    const plannerRolloutAssignment = assignAudioRolloutVariant({
+      domain: 'planner',
+      stableKey: mashup.id,
+      config: rolloutConfigs.planner,
+      override: rolloutOverrides.planner,
+    });
 
     const infoResults = await Promise.all(parsed.trackIds.map((id) => getTrackInfo(id)));
     const trackInfos = infoResults.filter(Boolean) as NonNullable<typeof infoResults[number]>[];
@@ -323,6 +334,7 @@ async function handlePost(request: NextRequest) {
           fadeDurationSeconds: parsed.fadeDurationSeconds,
         };
 
+    const planningStartedAt = Date.now();
     const plan = await planAutoDjMix(trackInfos, {
       trackIds: parsed.trackIds,
       targetDurationSeconds: parsed.targetDurationSeconds,
@@ -341,6 +353,7 @@ async function handlePost(request: NextRequest) {
       loudnessNormalization: parsed.loudnessNormalization,
       targetLoudness: parsed.targetLoudness,
     });
+    const planningDurationMs = Date.now() - planningStartedAt;
 
     await db
       .update(mashups)
@@ -348,6 +361,16 @@ async function handlePost(request: NextRequest) {
         recommendationContext: {
           plan,
           request: parsed,
+          rollouts: {
+            planner: plannerRolloutAssignment,
+          },
+          plannerTelemetry: {
+            planningDurationMs,
+            plannerVariant: plannerRolloutAssignment.variant,
+            plannerRolloutSource: plannerRolloutAssignment.source,
+            plannedAt: new Date().toISOString(),
+            trackCount: parsed.trackIds.length,
+          },
           stylePackApplied: resolvedStylePack
             ? {
                 id: resolvedStylePack.id,
@@ -383,6 +406,7 @@ async function handlePost(request: NextRequest) {
               targetLoudness: parsed.targetLoudness,
               enableFilterSweep: parsed.enableFilterSweep,
               tempoRampSeconds: parsed.tempoRampSeconds,
+              plannerVariant: plannerRolloutAssignment.variant,
             }),
           { mashupId: mashup.id }
         );
@@ -409,6 +433,8 @@ async function handlePost(request: NextRequest) {
         trackCount: parsed.trackIds.length,
         stylePackId: resolvedStylePack?.id ?? null,
         plannerDebugTrace: Boolean(parsed.plannerDebugTrace),
+        plannerVariant: plannerRolloutAssignment.variant,
+        planningDurationMs,
       },
     });
 

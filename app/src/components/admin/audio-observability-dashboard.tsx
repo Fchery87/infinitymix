@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import Link from 'next/link';
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
@@ -14,11 +14,31 @@ type ObservabilityMetricsResponse = {
     audioPipeline: {
       featureFlags: Record<string, boolean>;
       analysis: {
+        thresholds: {
+          overallConfidence: number;
+          bpmConfidence: number;
+          keyConfidence: number;
+        };
         qualityCounts: Record<string, number>;
         browserHintDecisionReasonCounts: Record<string, number>;
         completedTracks: number;
         browserHintTracks: number;
         browserHintAcceptanceRate: number | null;
+        sectionTagging: {
+          totalTracks: number;
+          statusCounts: Record<string, number>;
+          backendCounts: Record<string, number>;
+          rolloutVariantCounts: Record<string, number>;
+          fallbackReasonCounts: Record<string, number>;
+          averageTotalMs: number | null;
+          averageModelLoadMs: number | null;
+          averageInferenceMs: number | null;
+        };
+        mashupGeneration: {
+          plannerVariantCounts: Record<string, number>;
+          averagePlanningDurationMs: number | null;
+          averageRenderDurationMs: number | null;
+        };
         trends: {
           hourly24h: TrendPoint[];
           daily7d: TrendPoint[];
@@ -106,9 +126,40 @@ type TrendPoint = {
   reasonCounts: Record<string, number>;
 };
 
+type RolloutDomain = 'section_tagging' | 'planner';
+type RolloutVariant = 'control' | 'candidate';
+
+type AudioRolloutResponse = {
+  rollouts: Record<
+    RolloutDomain,
+    {
+      domain: RolloutDomain;
+      featureEnabled: boolean;
+      candidatePercent: number;
+      salt: string;
+      override: {
+        domain: RolloutDomain;
+        variant: RolloutVariant;
+        reason?: string | null;
+        updatedAt?: string | null;
+        adminUserEmail?: string | null;
+      } | null;
+    }
+  >;
+};
+
 function formatPct(value: number | null) {
   if (value == null) return 'N/A';
   return `${Math.round(value * 100)}%`;
+}
+
+function formatThreshold(value: number) {
+  return `${Math.round(value * 100)}%`;
+}
+
+function formatMs(value: number | null) {
+  if (value == null) return 'N/A';
+  return `${Math.round(value)} ms`;
 }
 
 function statusPill(status: AdminTrack['analysis_status']) {
@@ -260,6 +311,9 @@ export function AudioObservabilityDashboard({ adminUser }: DashboardProps) {
   const [quickReasonCode, setQuickReasonCode] = useState<string>('low_overall_confidence');
   const [auditLogs, setAuditLogs] = useState<AdminAuditLogEntry[]>([]);
   const [isLoadingAuditLogs, setIsLoadingAuditLogs] = useState(false);
+  const [rollouts, setRollouts] = useState<AudioRolloutResponse['rollouts'] | null>(null);
+  const [isLoadingRollouts, setIsLoadingRollouts] = useState(false);
+  const [rolloutMessage, setRolloutMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setPage(1);
@@ -315,6 +369,30 @@ export function AudioObservabilityDashboard({ adminUser }: DashboardProps) {
       }
     };
     void loadAuditLogs();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshTick]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadRollouts = async () => {
+      setIsLoadingRollouts(true);
+      try {
+        const res = await fetch('/api/admin/audio/rollouts', { cache: 'no-store' });
+        if (!res.ok) throw new Error('Failed to load rollout config');
+        const json = (await res.json()) as AudioRolloutResponse;
+        if (!cancelled) setRollouts(json.rollouts);
+      } catch (error) {
+        if (!cancelled) {
+          console.error(error);
+          setRollouts(null);
+        }
+      } finally {
+        if (!cancelled) setIsLoadingRollouts(false);
+      }
+    };
+    void loadRollouts();
     return () => {
       cancelled = true;
     };
@@ -518,6 +596,35 @@ export function AudioObservabilityDashboard({ adminUser }: DashboardProps) {
     }).then(() => setRefreshTick((v) => v + 1)).catch(() => undefined);
   };
 
+  const updateRolloutOverride = async (
+    domain: RolloutDomain,
+    variant: RolloutVariant | null
+  ) => {
+    setRolloutMessage(null);
+    try {
+      const res = await fetch('/api/admin/audio/rollouts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          domain,
+          variant,
+          reason: 'admin observability dashboard',
+        }),
+      });
+      const json = (await res.json()) as AudioRolloutResponse & { error?: string };
+      if (!res.ok) throw new Error(json.error || 'Failed to update rollout override');
+      setRollouts(json.rollouts);
+      setRolloutMessage(
+        variant
+          ? `Forced ${domain} to ${variant}.`
+          : `Cleared override for ${domain}.`
+      );
+      setRefreshTick((v) => v + 1);
+    } catch (error) {
+      setRolloutMessage(error instanceof Error ? error.message : 'Failed to update rollout override');
+    }
+  };
+
   return (
     <div className="min-h-screen text-foreground">
       <div className="fixed inset-0 -z-10 bg-background" />
@@ -571,7 +678,7 @@ export function AudioObservabilityDashboard({ adminUser }: DashboardProps) {
           </p>
         </section>
 
-        <section className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <section className="mb-8 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <Card className="border-primary/20 bg-card/60">
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-sm font-semibold text-gray-200">
@@ -637,8 +744,37 @@ export function AudioObservabilityDashboard({ adminUser }: DashboardProps) {
                 {metrics?.timestamp ? new Date(metrics.timestamp).toLocaleString() : 'Loading...'}
               </p>
               <p className="mt-2 text-xs text-gray-400">
-                {isLoadingMetrics || isLoadingTracks ? 'Refreshing now…' : 'Latest admin fetch'}
+                {isLoadingMetrics || isLoadingTracks ? 'Refreshing nowâ€¦' : 'Latest admin fetch'}
               </p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card/60">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-sm font-semibold text-gray-200">
+                <SlidersHorizontal className="h-4 w-4 text-cyan-300" />
+                Browser Hint Thresholds
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <div className="flex items-center justify-between rounded-lg border border-white/5 bg-black/20 px-3 py-2">
+                <span className="text-gray-300">Overall confidence</span>
+                <span className="font-semibold text-white">
+                  {formatThreshold(analysisMetrics?.thresholds.overallConfidence ?? 0)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg border border-white/5 bg-black/20 px-3 py-2">
+                <span className="text-gray-300">BPM confidence</span>
+                <span className="font-semibold text-white">
+                  {formatThreshold(analysisMetrics?.thresholds.bpmConfidence ?? 0)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg border border-white/5 bg-black/20 px-3 py-2">
+                <span className="text-gray-300">Key confidence</span>
+                <span className="font-semibold text-white">
+                  {formatThreshold(analysisMetrics?.thresholds.keyConfidence ?? 0)}
+                </span>
+              </div>
             </CardContent>
           </Card>
         </section>
@@ -679,6 +815,100 @@ export function AudioObservabilityDashboard({ adminUser }: DashboardProps) {
                 title="Daily (Last 7d)"
                 points={analysisMetrics?.trends.daily7d ?? []}
               />
+            </CardContent>
+          </Card>
+        </section>
+
+        <section className="mb-8 grid gap-4 xl:grid-cols-2">
+          <Card className="bg-card/60">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg text-white">Section Tagging Runtime</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-lg border border-white/5 bg-black/20 px-3 py-2">
+                  <div className="text-xs text-gray-500">Avg total</div>
+                  <div className="mt-1 font-semibold text-white">{formatMs(analysisMetrics?.sectionTagging.averageTotalMs ?? null)}</div>
+                </div>
+                <div className="rounded-lg border border-white/5 bg-black/20 px-3 py-2">
+                  <div className="text-xs text-gray-500">Avg model load</div>
+                  <div className="mt-1 font-semibold text-white">{formatMs(analysisMetrics?.sectionTagging.averageModelLoadMs ?? null)}</div>
+                </div>
+                <div className="rounded-lg border border-white/5 bg-black/20 px-3 py-2">
+                  <div className="text-xs text-gray-500">Avg inference</div>
+                  <div className="mt-1 font-semibold text-white">{formatMs(analysisMetrics?.sectionTagging.averageInferenceMs ?? null)}</div>
+                </div>
+              </div>
+              <div className="rounded-lg border border-white/5 bg-black/20 px-3 py-2 text-xs text-gray-400">
+                {analysisMetrics?.sectionTagging.totalTracks ?? 0} tracks with section-tagging telemetry in the last 7 days
+              </div>
+              <div>
+                <p className="mb-2 text-xs uppercase tracking-wide text-gray-500">Status Counts</p>
+                <div className="space-y-2">
+                  {Object.entries(analysisMetrics?.sectionTagging.statusCounts ?? {}).map(([key, count]) => (
+                    <div key={key} className="flex items-center justify-between rounded-lg border border-white/5 bg-black/20 px-3 py-2">
+                      <span className="text-gray-300">{key}</span>
+                      <span className="font-semibold text-white">{count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="mb-2 text-xs uppercase tracking-wide text-gray-500">Fallback Reasons</p>
+                <div className="space-y-2">
+                  {Object.entries(analysisMetrics?.sectionTagging.fallbackReasonCounts ?? {}).length === 0 && (
+                    <div className="rounded-lg border border-white/5 bg-black/20 px-3 py-2 text-xs text-gray-400">
+                      No fallback reasons recorded
+                    </div>
+                  )}
+                  {Object.entries(analysisMetrics?.sectionTagging.fallbackReasonCounts ?? {}).map(([key, count]) => (
+                    <div key={key} className="flex items-center justify-between rounded-lg border border-white/5 bg-black/20 px-3 py-2">
+                      <span className="text-gray-300">{key}</span>
+                      <span className="font-semibold text-white">{count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card/60">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg text-white">Mashup Generation Timing</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-lg border border-white/5 bg-black/20 px-3 py-2">
+                  <div className="text-xs text-gray-500">Avg planning</div>
+                  <div className="mt-1 font-semibold text-white">{formatMs(analysisMetrics?.mashupGeneration.averagePlanningDurationMs ?? null)}</div>
+                </div>
+                <div className="rounded-lg border border-white/5 bg-black/20 px-3 py-2">
+                  <div className="text-xs text-gray-500">Avg render</div>
+                  <div className="mt-1 font-semibold text-white">{formatMs(analysisMetrics?.mashupGeneration.averageRenderDurationMs ?? null)}</div>
+                </div>
+              </div>
+              <div>
+                <p className="mb-2 text-xs uppercase tracking-wide text-gray-500">Planner Variants</p>
+                <div className="space-y-2">
+                  {Object.entries(analysisMetrics?.mashupGeneration.plannerVariantCounts ?? {}).map(([key, count]) => (
+                    <div key={key} className="flex items-center justify-between rounded-lg border border-white/5 bg-black/20 px-3 py-2">
+                      <span className="text-gray-300">{key}</span>
+                      <span className="font-semibold text-white">{count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="mb-2 text-xs uppercase tracking-wide text-gray-500">Section Tagging Backends</p>
+                <div className="space-y-2">
+                  {Object.entries(analysisMetrics?.sectionTagging.backendCounts ?? {}).map(([key, count]) => (
+                    <div key={key} className="flex items-center justify-between rounded-lg border border-white/5 bg-black/20 px-3 py-2">
+                      <span className="text-gray-300">{key}</span>
+                      <span className="font-semibold text-white">{count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </CardContent>
           </Card>
         </section>
@@ -731,9 +961,9 @@ export function AudioObservabilityDashboard({ adminUser }: DashboardProps) {
               <div className="flex flex-col gap-3 rounded-xl border border-white/10 bg-black/20 p-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="text-xs text-gray-400">
                   Selected: <span className="font-semibold text-white">{selectedTrackIds.length}</span>
-                  {' • '}
+                  {' â€¢ '}
                   Selected (loaded): <span className="font-semibold text-white">{selectedTracks.length}</span>
-                  {' • '}
+                  {' â€¢ '}
                   Visible: <span className="font-semibold text-white">{visibleTracks.length}</span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -874,8 +1104,8 @@ export function AudioObservabilityDashboard({ adminUser }: DashboardProps) {
                             </div>
                           </td>
                           <td className="px-4 py-3 text-xs text-gray-300">
-                            <div>BPM {track.bpm_confidence != null ? `${Math.round(track.bpm_confidence * 100)}%` : '—'}</div>
-                            <div className="mt-1">Key {track.key_confidence != null ? `${Math.round(track.key_confidence * 100)}%` : '—'}</div>
+                            <div>BPM {track.bpm_confidence != null ? `${Math.round(track.bpm_confidence * 100)}%` : 'â€”'}</div>
+                            <div className="mt-1">Key {track.key_confidence != null ? `${Math.round(track.key_confidence * 100)}%` : 'â€”'}</div>
                           </td>
                           <td className="px-4 py-3 text-xs text-gray-400">
                             {new Date(track.created_at).toLocaleString()}
@@ -885,7 +1115,7 @@ export function AudioObservabilityDashboard({ adminUser }: DashboardProps) {
                       {(tracksResponse?.tracks ?? []).length === 0 && (
                         <tr>
                           <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">
-                            {isLoadingTracks ? 'Loading tracks…' : 'No tracks match the current filters.'}
+                            {isLoadingTracks ? 'Loading tracksâ€¦' : 'No tracks match the current filters.'}
                           </td>
                         </tr>
                       )}
@@ -944,6 +1174,68 @@ export function AudioObservabilityDashboard({ adminUser }: DashboardProps) {
                 {Object.keys(featureFlags).length === 0 && (
                   <p className="text-sm text-gray-400">Feature flags unavailable.</p>
                 )}
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card/60">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg text-white">Audio Rollouts</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                {rolloutMessage && (
+                  <div className="rounded-lg border border-primary/20 bg-primary/10 px-3 py-2 text-primary">
+                    {rolloutMessage}
+                  </div>
+                )}
+                {isLoadingRollouts && !rollouts && (
+                  <p className="text-sm text-gray-400">Loading rollout config...</p>
+                )}
+                {(['section_tagging', 'planner'] as RolloutDomain[]).map((domain) => {
+                  const rollout = rollouts?.[domain];
+                  return (
+                    <div key={domain} className="rounded-lg border border-white/5 bg-black/20 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="font-medium text-white">{domain}</div>
+                          <div className="text-xs text-gray-500">
+                            feature {rollout?.featureEnabled ? 'enabled' : 'disabled'} • {rollout?.candidatePercent ?? 0}% candidate
+                          </div>
+                        </div>
+                        <div className="text-xs text-gray-400">
+                          {rollout?.override ? `forced ${rollout.override.variant}` : 'inherit'}
+                        </div>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <Button
+                          variant="outline"
+                          className="border-white/10 bg-black/20"
+                          onClick={() => void updateRolloutOverride(domain, 'control')}
+                        >
+                          Force Control
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="border-white/10 bg-black/20"
+                          onClick={() => void updateRolloutOverride(domain, 'candidate')}
+                        >
+                          Force Candidate
+                        </Button>
+                        <Button
+                          variant="outline"
+                          className="border-white/10 bg-black/20"
+                          onClick={() => void updateRolloutOverride(domain, null)}
+                        >
+                          Clear Override
+                        </Button>
+                      </div>
+                      {rollout?.override?.updatedAt && (
+                        <div className="mt-2 text-[11px] text-gray-500">
+                          {rollout.override.adminUserEmail ?? 'admin'} • {new Date(rollout.override.updatedAt).toLocaleString()}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </CardContent>
             </Card>
 
@@ -1040,7 +1332,7 @@ export function AudioObservabilityDashboard({ adminUser }: DashboardProps) {
                       <div className="text-[11px] text-gray-500">{new Date(entry.created_at).toLocaleString()}</div>
                     </div>
                     <div className="mt-1 text-xs text-gray-400">
-                      {entry.admin_user_email ?? entry.admin_user_id ?? 'unknown admin'} • {entry.resource_type}
+                      {entry.admin_user_email ?? entry.admin_user_id ?? 'unknown admin'} â€¢ {entry.resource_type}
                     </div>
                     <div className="mt-2 text-xs text-gray-500">
                       resources: {entry.resource_ids.length}
@@ -1069,6 +1361,12 @@ export function AudioObservabilityDashboard({ adminUser }: DashboardProps) {
                 <a href="/api/admin/audit/logs?limit=25" className="block rounded-lg border border-white/5 bg-black/20 px-3 py-2 text-gray-300 hover:text-white">
                   `/api/admin/audit/logs?limit=25`
                 </a>
+                <a href="/api/admin/audio/rollouts" className="block rounded-lg border border-white/5 bg-black/20 px-3 py-2 text-gray-300 hover:text-white">
+                  `/api/admin/audio/rollouts`
+                </a>
+                <a href="/api/audio/pipeline-config" className="block rounded-lg border border-white/5 bg-black/20 px-3 py-2 text-gray-300 hover:text-white">
+                  `/api/audio/pipeline-config`
+                </a>
                 <a href="/admin/audio-preview-qa" className="block rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-primary hover:text-white">
                   `/admin/audio-preview-qa` (local browser preview QA telemetry)
                 </a>
@@ -1080,3 +1378,4 @@ export function AudioObservabilityDashboard({ adminUser }: DashboardProps) {
     </div>
   );
 }
+

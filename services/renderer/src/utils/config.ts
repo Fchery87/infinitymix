@@ -1,7 +1,3 @@
-import dotenv from 'dotenv'
-
-dotenv.config()
-
 function parseFlag(value: string | undefined, fallback = false): boolean {
   if (value == null) return fallback
   const normalized = value.trim().toLowerCase()

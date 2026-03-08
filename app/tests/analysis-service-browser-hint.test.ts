@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { BrowserAnalysisHint } from '@/lib/audio/types/analysis';
 import { __testables } from '@/lib/audio/analysis-service';
+import {
+  __testables as browserHintThresholdTestables,
+  getBrowserHintThresholds,
+} from '@/lib/audio/browser-hint-thresholds';
 
 function makeHint(overrides: Partial<BrowserAnalysisHint> = {}): BrowserAnalysisHint {
   return {
@@ -34,6 +38,14 @@ function makeHint(overrides: Partial<BrowserAnalysisHint> = {}): BrowserAnalysis
 }
 
 describe('analysis-service browser hint gating', () => {
+  it('uses the default threshold values when env overrides are absent', () => {
+    expect(getBrowserHintThresholds()).toEqual({
+      overallConfidence: 0.7,
+      bpmConfidence: 0.65,
+      keyConfidence: 0.5,
+    });
+  });
+
   it('accepts a valid high-confidence browser hint when feature flag is enabled', () => {
     const hint = makeHint();
     expect(__testables.isBrowserAnalysisHint(hint)).toBe(true);
@@ -96,6 +108,42 @@ describe('analysis-service browser hint gating', () => {
     expect(__testables.getBrowserHintDecisionReason(makeHint(), false)).toBe('feature_disabled');
     expect(__testables.getBrowserHintDecisionReason(makeHint(), true)).toBe('accepted');
   });
+
+  it('supports env-based threshold overrides', () => {
+    const previousOverall = process.env.IMX_BROWSER_HINT_CONFIDENCE_THRESHOLD;
+    const previousTempo = process.env.IMX_BROWSER_HINT_TEMPO_CONFIDENCE_THRESHOLD;
+    const previousKey = process.env.IMX_BROWSER_HINT_KEY_CONFIDENCE_THRESHOLD;
+
+    process.env.IMX_BROWSER_HINT_CONFIDENCE_THRESHOLD = '0.85';
+    process.env.IMX_BROWSER_HINT_TEMPO_CONFIDENCE_THRESHOLD = '0.8';
+    process.env.IMX_BROWSER_HINT_KEY_CONFIDENCE_THRESHOLD = '0.75';
+
+    try {
+      expect(getBrowserHintThresholds()).toEqual({
+        overallConfidence: 0.85,
+        bpmConfidence: 0.8,
+        keyConfidence: 0.75,
+      });
+      expect(__testables.shouldUseBrowserHint(makeHint())).toBe(true);
+      expect(__testables.shouldUseBrowserHint(makeHint({ keyConfidence: 0.7 }))).toBe(false);
+    } finally {
+      if (previousOverall == null) {
+        delete process.env.IMX_BROWSER_HINT_CONFIDENCE_THRESHOLD;
+      } else {
+        process.env.IMX_BROWSER_HINT_CONFIDENCE_THRESHOLD = previousOverall;
+      }
+      if (previousTempo == null) {
+        delete process.env.IMX_BROWSER_HINT_TEMPO_CONFIDENCE_THRESHOLD;
+      } else {
+        process.env.IMX_BROWSER_HINT_TEMPO_CONFIDENCE_THRESHOLD = previousTempo;
+      }
+      if (previousKey == null) {
+        delete process.env.IMX_BROWSER_HINT_KEY_CONFIDENCE_THRESHOLD;
+      } else {
+        process.env.IMX_BROWSER_HINT_KEY_CONFIDENCE_THRESHOLD = previousKey;
+      }
+    }
+  });
 });
 
 describe('analysis-service browser hint db mapping', () => {
@@ -138,5 +186,14 @@ describe('analysis-service browser hint db mapping', () => {
         confidence: {},
       })
     ).toBe(false);
+  });
+});
+
+describe('browser-hint thresholds', () => {
+  it('falls back for invalid threshold env values', () => {
+    expect(browserHintThresholdTestables.parseThreshold(undefined, 0.7)).toBe(0.7);
+    expect(browserHintThresholdTestables.parseThreshold('not-a-number', 0.7)).toBe(0.7);
+    expect(browserHintThresholdTestables.parseThreshold('-1', 0.7)).toBe(0.7);
+    expect(browserHintThresholdTestables.parseThreshold('2', 0.7)).toBe(0.7);
   });
 });

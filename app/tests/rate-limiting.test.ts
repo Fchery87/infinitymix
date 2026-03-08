@@ -5,6 +5,17 @@ import {
 } from '@/lib/utils/rate-limiting';
 import { NextRequest, NextResponse } from 'next/server';
 
+vi.mock('@/lib/auth/session', () => ({
+  getSessionUser: vi.fn(),
+}));
+
+vi.mock('@/lib/auth/admin', () => ({
+  isAdminUser: vi.fn(),
+}));
+
+import { getSessionUser } from '@/lib/auth/session';
+import { isAdminUser } from '@/lib/auth/admin';
+
 function createMockRequest(ip: string = '127.0.0.1'): NextRequest {
   return new NextRequest('http://localhost/test', {
     headers: {
@@ -16,6 +27,8 @@ function createMockRequest(ip: string = '127.0.0.1'): NextRequest {
 describe('Rate Limiting', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.mocked(getSessionUser).mockResolvedValue(null);
+    vi.mocked(isAdminUser).mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -135,6 +148,30 @@ describe('Rate Limiting', () => {
       const response = await wrappedHandler(request);
 
       expect(response.status).toBe(429);
+    });
+
+    it('bypasses rate limits for admin users', async () => {
+      const limiter = createRateLimiter({
+        windowMs: 60000,
+        maxRequests: 1,
+      });
+
+      vi.mocked(getSessionUser).mockResolvedValue({
+        id: 'admin-user',
+        email: 'admin@example.com',
+      } as never);
+      vi.mocked(isAdminUser).mockReturnValue(true);
+
+      const wrappedHandler = withRateLimit(limiter)(async () => {
+        return NextResponse.json({ success: true });
+      });
+
+      const request = createMockRequest('192.168.1.105');
+      const first = await wrappedHandler(request);
+      const second = await wrappedHandler(request);
+
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
     });
   });
 });

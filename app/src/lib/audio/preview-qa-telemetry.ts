@@ -83,6 +83,10 @@ export function getPreviewQaTelemetryStore(): PreviewQaStore {
   return readStore();
 }
 
+export function exportPreviewQaTelemetryStore(): string {
+  return JSON.stringify(readStore(), null, 2);
+}
+
 export function resetPreviewQaTelemetryStore() {
   if (typeof window === 'undefined') return;
   try {

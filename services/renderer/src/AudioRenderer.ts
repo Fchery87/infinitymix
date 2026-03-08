@@ -5,6 +5,7 @@ import { config } from './utils/config'
 import * as fs from 'fs'
 import * as path from 'path'
 import { promisify } from 'util'
+import type { NormalizationResult } from './loudnorm'
 import { normalizeLoudness } from './loudnorm'
 
 interface TimelineSegment {
@@ -45,6 +46,11 @@ interface RenderingJobData {
   userId: string
 }
 
+export interface RenderMashupResult {
+  storageUrl: string
+  renderQa: NormalizationResult
+}
+
 export class AudioRenderer {
   private s3: AWS.S3
   private tempDir: string
@@ -63,7 +69,7 @@ export class AudioRenderer {
   /**
    * Render complete mashup from timeline plan
    */
-  async renderMashup(mashupId: string, timelinePlan: RenderingJobData['timelinePlan']): Promise<string> {
+  async renderMashup(mashupId: string, timelinePlan: RenderingJobData['timelinePlan']): Promise<RenderMashupResult> {
     const tempDir = path.join(this.tempDir, mashupId)
     
     try {
@@ -86,14 +92,16 @@ export class AudioRenderer {
       
       // Normalize loudness
       const loudnormOutputPath = outputPath.replace('.wav', '_normalized.wav')
-      const qaMetrics = await normalizeLoudness(outputPath, loudnormOutputPath)
+      const normalization = await normalizeLoudness(outputPath, loudnormOutputPath)
 
       logger.info('Loudness normalization completed', {
         mashupId,
-        integratedLoudness: qaMetrics.integratedLoudness,
-        truePeak: qaMetrics.truePeak,
-        loudnessRange: qaMetrics.loudnessRange,
-        clippingDetected: qaMetrics.clippingDetected,
+        integratedLoudness: normalization.postRender.integratedLoudness,
+        truePeak: normalization.postRender.truePeak,
+        loudnessRange: normalization.postRender.loudnessRange,
+        clippingDetected: normalization.postRender.clippingDetected,
+        peakCount: normalization.postRender.peakCount,
+        retryCount: normalization.retryCount,
       })
       
       // Convert to MP3
@@ -108,7 +116,10 @@ export class AudioRenderer {
         storageUrl 
       })
 
-      return storageUrl
+      return {
+        storageUrl,
+        renderQa: normalization,
+      }
     } catch (error) {
       logger.error('Error rendering mashup:', { error: error instanceof Error ? error.message : 'Unknown error', mashupId })
       throw error
@@ -431,23 +442,60 @@ export class AudioRenderer {
   /**
    * Update mashup output info in database
    */
-  async updateMashupOutput(mashupId: string, storageUrl: string, outputFileSize: number): Promise<void> {
+  async updateMashupOutput(
+    mashupId: string,
+    storageUrl: string,
+    outputFileSize: number,
+    generationTimeMs: number,
+    renderQa: NormalizationResult
+  ): Promise<void> {
     try {
       const { PrismaClient } = require('@prisma/client')
       const prisma = new PrismaClient()
+
+      const existing = await prisma.mashup.findUnique({
+        where: { id: mashupId },
+        select: { recommendationContext: true }
+      })
+
+      const recommendationContext =
+        existing?.recommendationContext && typeof existing.recommendationContext === 'object'
+          ? existing.recommendationContext
+          : {}
       
       await prisma.mashup.update({
         where: { id: mashupId },
         data: {
           outputStorageUrl: storageUrl,
           outputFileSize: BigInt(outputFileSize),
-          generationStatus: 'COMPLETED'
+          generationStatus: 'COMPLETED',
+          generationTimeMs,
+          recommendationContext: {
+            ...recommendationContext,
+            renderQa: {
+              loudnormPass1: renderQa.loudnormPass1,
+              loudnormPass2: renderQa.loudnormPass2,
+              postRender: renderQa.postRender,
+              retryCount: renderQa.retryCount,
+              targetProfile: {
+                integratedLufs: -14,
+                truePeakCeiling: -1.5,
+                maxTruePeak: -1.0,
+              },
+            },
+          },
         }
       })
       
       await prisma.$disconnect()
       
-      logger.info('Mashup output updated', { mashupId, storageUrl, outputFileSize })
+      logger.info('Mashup output updated', {
+        mashupId,
+        storageUrl,
+        outputFileSize,
+        generationTimeMs,
+        renderQaRetryCount: renderQa.retryCount,
+      })
     } catch (error) {
       logger.error('Error updating mashup output:', error)
       throw new Error('Failed to update mashup output')

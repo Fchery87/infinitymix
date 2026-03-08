@@ -27,6 +27,7 @@ export async function GET(
 
     const { searchParams } = new URL(request.url);
     const streamOnly = searchParams.get('stream') === 'true';
+    const requestedVariant = searchParams.get('variant');
 
     // Get mashup details
     const [mashup] = await db
@@ -34,7 +35,9 @@ export async function GET(
         id: mashups.id,
         generationStatus: mashups.generationStatus,
         outputStorageUrl: mashups.outputStorageUrl,
+        publicPlaybackUrl: mashups.publicPlaybackUrl,
         outputFormat: mashups.outputFormat,
+        recommendationContext: mashups.recommendationContext,
         userId: mashups.userId,
       })
       .from(mashups)
@@ -50,21 +53,69 @@ export async function GET(
       );
     }
 
-    if (mashup.generationStatus !== 'completed' || !mashup.outputStorageUrl) {
+    if (
+      mashup.generationStatus !== 'completed' ||
+      (!mashup.outputStorageUrl && !mashup.publicPlaybackUrl)
+    ) {
       return NextResponse.json(
         { error: 'Mashup not ready for download' },
         { status: 409 }
       );
     }
 
+    const outputVariants =
+      mashup.recommendationContext && typeof mashup.recommendationContext === 'object'
+        ? ((mashup.recommendationContext as Record<string, unknown>).outputVariants as
+            | {
+                master?: { storageUrl?: string; format?: string; mimeType?: string };
+                playback?: { storageUrl?: string; format?: string; mimeType?: string };
+              }
+            | undefined)
+        : undefined;
+
+    const normalizedVariant =
+      requestedVariant === 'mp3' || requestedVariant === 'playback'
+        ? 'playback'
+        : requestedVariant === 'wav' || requestedVariant === 'master'
+          ? 'master'
+          : streamOnly
+            ? 'playback'
+            : 'master';
+
+    const selectedAsset =
+      normalizedVariant === 'playback'
+        ? {
+            storageUrl:
+              outputVariants?.playback?.storageUrl ??
+              mashup.publicPlaybackUrl ??
+              mashup.outputStorageUrl,
+            format: outputVariants?.playback?.format ?? 'mp3',
+            mimeType: outputVariants?.playback?.mimeType ?? 'audio/mpeg',
+          }
+        : {
+            storageUrl:
+              outputVariants?.master?.storageUrl ?? mashup.outputStorageUrl,
+            format: outputVariants?.master?.format ?? mashup.outputFormat ?? 'wav',
+            mimeType: outputVariants?.master?.mimeType ?? 'audio/wav',
+          };
+
+    if (!selectedAsset.storageUrl) {
+      return NextResponse.json(
+        { error: `Mashup ${normalizedVariant} asset not available` },
+        { status: 409 }
+      );
+    }
+
     const storage = await getStorage();
     let fileBuffer: ArrayBuffer;
-    let mimeType = mashup.outputFormat === 'mp3' ? 'audio/mpeg' : 'audio/wav';
+    let mimeType = selectedAsset.mimeType;
 
-    console.log(`📥 Download: Fetching mashup ${mashupId} from ${mashup.outputStorageUrl}`);
+    console.log(
+      `📥 Download: Fetching ${normalizedVariant} mashup ${mashupId} from ${selectedAsset.storageUrl}`
+    );
 
     if (storage.getFile) {
-      const stored = await storage.getFile(mashup.outputStorageUrl);
+      const stored = await storage.getFile(selectedAsset.storageUrl);
       if (!stored) {
         console.error(`❌ Download: File not found in storage for ${mashupId}`);
         return NextResponse.json(
@@ -77,7 +128,7 @@ export async function GET(
       console.log(`✅ Download: Got ${fileBuffer.byteLength} bytes, mime=${mimeType}`);
     } else {
       console.log(`⚠️ Download: No getFile, fetching directly from URL`);
-      const response = await fetch(mashup.outputStorageUrl);
+      const response = await fetch(selectedAsset.storageUrl);
       if (!response.ok) {
         console.error(`❌ Download: Direct fetch failed for ${mashupId}`);
         return NextResponse.json(
@@ -105,18 +156,20 @@ export async function GET(
         mashupId,
         userId: user.id,
         streamOnly,
-        outputFormat: mashup.outputFormat,
+        outputFormat: selectedAsset.format,
+        variant: normalizedVariant,
       },
     });
     log('info', 'mashup.download', {
       mashupId,
       userId: user.id,
       streamOnly,
-      outputFormat: mashup.outputFormat,
+      outputFormat: selectedAsset.format,
+      variant: normalizedVariant,
     });
 
     const buffer = Buffer.from(fileBuffer);
-    const fileName = `InfinityMix_Mashup_${new Date().toISOString().replace(/[:.]/g, '-')}.${mashup.outputFormat}`;
+    const fileName = `InfinityMix_Mashup_${new Date().toISOString().replace(/[:.]/g, '-')}.${selectedAsset.format}`;
 
     return new NextResponse(buffer, {
       headers: {

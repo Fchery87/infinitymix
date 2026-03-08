@@ -215,6 +215,18 @@ export const uploadedTracks = pgTable('uploaded_tracks', {
       attempted: boolean;
       backend: 'webgpu' | 'wasm' | 'heuristic' | 'none';
       status: 'success' | 'fallback' | 'disabled' | 'unavailable';
+      timing?: {
+        totalMs?: number | null;
+        modelLoadMs?: number | null;
+        inferenceMs?: number | null;
+      };
+      fallbackReason?: string | null;
+      rollout?: {
+        variant: 'control' | 'candidate';
+        source: 'feature_disabled' | 'override' | 'percentage';
+        bucket: number | null;
+        stableKey: string;
+      };
       model?: string | null;
       error?: string | null;
       tags: Array<{

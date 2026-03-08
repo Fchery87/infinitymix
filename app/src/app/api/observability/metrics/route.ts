@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { getAudioPipelineFeatureFlags } from '@/lib/audio/feature-flags';
+import { getBrowserHintThresholds } from '@/lib/audio/browser-hint-thresholds';
 import { db } from '@/lib/db';
-import { uploadedTracks } from '@/lib/db/schema';
+import { mashups, uploadedTracks } from '@/lib/db/schema';
 import { gte, sql } from 'drizzle-orm';
 import { requireAdminApiUser } from '@/lib/auth/admin';
 import type { NextRequest } from 'next/server';
@@ -120,12 +121,33 @@ export async function GET(request: NextRequest) {
   }
 
   const flags = getAudioPipelineFeatureFlags();
+  const thresholds = getBrowserHintThresholds();
   let audioAnalysisMetrics: {
+    thresholds: {
+      overallConfidence: number;
+      bpmConfidence: number;
+      keyConfidence: number;
+    };
     qualityCounts: Record<string, number>;
     browserHintDecisionReasonCounts: Record<string, number>;
     completedTracks: number;
     browserHintTracks: number;
     browserHintAcceptanceRate: number | null;
+    sectionTagging: {
+      totalTracks: number;
+      statusCounts: Record<string, number>;
+      backendCounts: Record<string, number>;
+      rolloutVariantCounts: Record<string, number>;
+      fallbackReasonCounts: Record<string, number>;
+      averageTotalMs: number | null;
+      averageModelLoadMs: number | null;
+      averageInferenceMs: number | null;
+    };
+    mashupGeneration: {
+      plannerVariantCounts: Record<string, number>;
+      averagePlanningDurationMs: number | null;
+      averageRenderDurationMs: number | null;
+    };
     trends: {
       hourly24h: TrendPoint[];
       daily7d: TrendPoint[];
@@ -148,6 +170,8 @@ export async function GET(request: NextRequest) {
       hourlyReasonsRaw,
       dailyTotalsRaw,
       dailyReasonsRaw,
+      sectionTaggingRows,
+      mashupTelemetryRows,
     ] = await Promise.all([
       db
         .select({
@@ -213,11 +237,130 @@ export async function GET(request: NextRequest) {
         .where(gte(uploadedTracks.createdAt, cutoff7d))
         .groupBy(dailyBucketExpr, uploadedTracks.browserHintDecisionReason)
         .orderBy(dailyBucketExpr),
+      db
+        .select({
+          analysisFeatures: uploadedTracks.analysisFeatures,
+        })
+        .from(uploadedTracks)
+        .where(gte(uploadedTracks.createdAt, cutoff7d)),
+      db
+        .select({
+          recommendationContext: mashups.recommendationContext,
+        })
+        .from(mashups)
+        .where(gte(mashups.createdAt, cutoff7d)),
     ]);
+
+    const sectionTaggingMetrics = {
+      totalTracks: 0,
+      statusCounts: {} as Record<string, number>,
+      backendCounts: {} as Record<string, number>,
+      rolloutVariantCounts: {} as Record<string, number>,
+      fallbackReasonCounts: {} as Record<string, number>,
+      averageTotalMs: null as number | null,
+      averageModelLoadMs: null as number | null,
+      averageInferenceMs: null as number | null,
+    };
+    const totalSamples: number[] = [];
+    const modelLoadSamples: number[] = [];
+    const inferenceSamples: number[] = [];
+
+    for (const row of sectionTaggingRows) {
+      const analysisFeatures =
+        row.analysisFeatures && typeof row.analysisFeatures === 'object'
+          ? (row.analysisFeatures as Record<string, unknown>)
+          : null;
+      const sectionTagging =
+        analysisFeatures?.sectionTagging && typeof analysisFeatures.sectionTagging === 'object'
+          ? (analysisFeatures.sectionTagging as Record<string, unknown>)
+          : null;
+      if (!sectionTagging) continue;
+
+      sectionTaggingMetrics.totalTracks += 1;
+      const status = typeof sectionTagging.status === 'string' ? sectionTagging.status : 'unknown';
+      const backend = typeof sectionTagging.backend === 'string' ? sectionTagging.backend : 'unknown';
+      const fallbackReason =
+        typeof sectionTagging.fallbackReason === 'string' ? sectionTagging.fallbackReason : null;
+      const rollout =
+        sectionTagging.rollout && typeof sectionTagging.rollout === 'object'
+          ? (sectionTagging.rollout as Record<string, unknown>)
+          : null;
+      const rolloutVariant = typeof rollout?.variant === 'string' ? rollout.variant : 'unknown';
+      const timing =
+        sectionTagging.timing && typeof sectionTagging.timing === 'object'
+          ? (sectionTagging.timing as Record<string, unknown>)
+          : null;
+
+      sectionTaggingMetrics.statusCounts[status] =
+        (sectionTaggingMetrics.statusCounts[status] ?? 0) + 1;
+      sectionTaggingMetrics.backendCounts[backend] =
+        (sectionTaggingMetrics.backendCounts[backend] ?? 0) + 1;
+      sectionTaggingMetrics.rolloutVariantCounts[rolloutVariant] =
+        (sectionTaggingMetrics.rolloutVariantCounts[rolloutVariant] ?? 0) + 1;
+      if (fallbackReason) {
+        sectionTaggingMetrics.fallbackReasonCounts[fallbackReason] =
+          (sectionTaggingMetrics.fallbackReasonCounts[fallbackReason] ?? 0) + 1;
+      }
+      if (typeof timing?.totalMs === 'number') totalSamples.push(timing.totalMs);
+      if (typeof timing?.modelLoadMs === 'number') modelLoadSamples.push(timing.modelLoadMs);
+      if (typeof timing?.inferenceMs === 'number') inferenceSamples.push(timing.inferenceMs);
+    }
+
+    const average = (values: number[]) =>
+      values.length > 0
+        ? Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2))
+        : null;
+    sectionTaggingMetrics.averageTotalMs = average(totalSamples);
+    sectionTaggingMetrics.averageModelLoadMs = average(modelLoadSamples);
+    sectionTaggingMetrics.averageInferenceMs = average(inferenceSamples);
+
+    const mashupGenerationMetrics = {
+      plannerVariantCounts: {} as Record<string, number>,
+      averagePlanningDurationMs: null as number | null,
+      averageRenderDurationMs: null as number | null,
+    };
+    const planningSamples: number[] = [];
+    const renderSamples: number[] = [];
+
+    for (const row of mashupTelemetryRows) {
+      const recommendationContext =
+        row.recommendationContext && typeof row.recommendationContext === 'object'
+          ? (row.recommendationContext as Record<string, unknown>)
+          : null;
+      if (!recommendationContext) continue;
+
+      const plannerTelemetry =
+        recommendationContext.plannerTelemetry &&
+        typeof recommendationContext.plannerTelemetry === 'object'
+          ? (recommendationContext.plannerTelemetry as Record<string, unknown>)
+          : null;
+      const renderTelemetry =
+        recommendationContext.renderTelemetry &&
+        typeof recommendationContext.renderTelemetry === 'object'
+          ? (recommendationContext.renderTelemetry as Record<string, unknown>)
+          : null;
+      const plannerVariant =
+        typeof plannerTelemetry?.plannerVariant === 'string'
+          ? plannerTelemetry.plannerVariant
+          : 'unknown';
+
+      mashupGenerationMetrics.plannerVariantCounts[plannerVariant] =
+        (mashupGenerationMetrics.plannerVariantCounts[plannerVariant] ?? 0) + 1;
+      if (typeof plannerTelemetry?.planningDurationMs === 'number') {
+        planningSamples.push(plannerTelemetry.planningDurationMs);
+      }
+      if (typeof renderTelemetry?.renderDurationMs === 'number') {
+        renderSamples.push(renderTelemetry.renderDurationMs);
+      }
+    }
+
+    mashupGenerationMetrics.averagePlanningDurationMs = average(planningSamples);
+    mashupGenerationMetrics.averageRenderDurationMs = average(renderSamples);
 
     const completedTracks = Number(totalsRaw[0]?.completedTracks ?? 0);
     const browserHintTracks = Number(totalsRaw[0]?.browserHintTracks ?? 0);
     audioAnalysisMetrics = {
+      thresholds,
       qualityCounts: Object.fromEntries(
         qualityCountsRaw.map((row) => [row.analysisQuality ?? 'unknown', Number(row.count ?? 0)])
       ),
@@ -228,6 +371,8 @@ export async function GET(request: NextRequest) {
       browserHintTracks,
       browserHintAcceptanceRate:
         completedTracks > 0 ? Number((browserHintTracks / completedTracks).toFixed(4)) : null,
+      sectionTagging: sectionTaggingMetrics,
+      mashupGeneration: mashupGenerationMetrics,
       trends: {
         hourly24h: mergeTrendSeries(
           buildUtcHourBuckets(24),

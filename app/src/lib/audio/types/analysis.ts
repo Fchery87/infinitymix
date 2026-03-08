@@ -6,6 +6,8 @@ export type AnalysisConfidenceSnapshot = {
   section: number | null;
 };
 
+type AudioRolloutVariant = 'control' | 'candidate';
+
 export type BrowserAnalysisHint = {
   source: 'browser-worker';
   version: 'browser-v1';
@@ -34,6 +36,18 @@ export type BrowserAnalysisHint = {
       attempted: boolean;
       backend: 'webgpu' | 'wasm' | 'heuristic' | 'none';
       status: 'success' | 'fallback' | 'disabled' | 'unavailable';
+      timing?: {
+        totalMs?: number | null;
+        modelLoadMs?: number | null;
+        inferenceMs?: number | null;
+      };
+      fallbackReason?: string | null;
+      rollout?: {
+        variant: AudioRolloutVariant;
+        source: 'feature_disabled' | 'override' | 'percentage';
+        bucket: number | null;
+        stableKey: string;
+      };
       model?: string | null;
       error?: string | null;
       tags: Array<{
@@ -73,6 +87,12 @@ export type BrowserAnalysisHint = {
     mlSectionTaggingEnabled?: boolean;
     mlSectionTaggingBackend?: 'webgpu' | 'wasm' | 'heuristic' | 'none';
     mlSectionTaggingStatus?: 'success' | 'fallback' | 'disabled' | 'unavailable';
+    mlSectionTaggingTotalMs?: number | null;
+    mlSectionTaggingModelLoadMs?: number | null;
+    mlSectionTaggingInferenceMs?: number | null;
+    mlSectionTaggingFallbackReason?: string | null;
+    mlSectionTaggingRolloutVariant?: AudioRolloutVariant;
+    mlSectionTaggingRolloutSource?: 'feature_disabled' | 'override' | 'percentage';
     beatDetectorAvailable?: boolean;
   };
   confidence: AnalysisConfidenceSnapshot;

@@ -124,6 +124,22 @@ export async function startResumableUpload(
     });
 
     const upload = new tus.Upload(options.file, uploadOptions);
-    upload.start();
+
+    const start = async () => {
+      if (!options.previousUploadUrl && typeof upload.findPreviousUploads === 'function') {
+        try {
+          const previousUploads = await upload.findPreviousUploads();
+          if (previousUploads.length > 0 && typeof upload.resumeFromPreviousUpload === 'function') {
+            upload.resumeFromPreviousUpload(previousUploads[0]);
+          }
+        } catch {
+          // best-effort resume discovery only
+        }
+      }
+
+      upload.start();
+    };
+
+    void start();
   });
 }

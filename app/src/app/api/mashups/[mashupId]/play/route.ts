@@ -22,7 +22,12 @@ export async function POST(
     }
 
     const [mashup] = await db
-      .select({ id: mashups.id, generationStatus: mashups.generationStatus, outputStorageUrl: mashups.outputStorageUrl })
+      .select({
+        id: mashups.id,
+        generationStatus: mashups.generationStatus,
+        outputStorageUrl: mashups.outputStorageUrl,
+        publicPlaybackUrl: mashups.publicPlaybackUrl,
+      })
       .from(mashups)
       .where(and(eq(mashups.id, mashupId), eq(mashups.userId, user.id)));
 
@@ -30,7 +35,10 @@ export async function POST(
       return NextResponse.json({ error: 'Mashup not found' }, { status: 404 });
     }
 
-    if (mashup.generationStatus !== 'completed' || !mashup.outputStorageUrl) {
+    if (
+      mashup.generationStatus !== 'completed' ||
+      (!mashup.outputStorageUrl && !mashup.publicPlaybackUrl)
+    ) {
       return NextResponse.json({ error: 'Mashup not ready for playback' }, { status: 409 });
     }
 

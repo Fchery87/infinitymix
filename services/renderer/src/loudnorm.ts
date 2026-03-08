@@ -1,4 +1,4 @@
-import * as ffmpeg from 'fluent-ffmpeg';
+import ffmpeg from 'fluent-ffmpeg';
 
 export const TARGET_LUFS = -14;
 export const TRUE_PEAK_CEILING = -1.5;
@@ -19,6 +19,18 @@ export interface QaMetrics {
   truePeak: number;
   loudnessRange: number;
   clippingDetected: boolean;
+}
+
+export interface PostRenderQaMetrics extends QaMetrics {
+  peakCount: number | null;
+  source: 'ebur128+astats';
+}
+
+export interface NormalizationResult {
+  loudnormPass1: LoudnormStats;
+  loudnormPass2: QaMetrics;
+  postRender: PostRenderQaMetrics;
+  retryCount: number;
 }
 
 export interface LoudnormJsonOutput {
@@ -64,6 +76,24 @@ export function shouldRetryRender(metrics: QaMetrics): boolean {
     return true;
   }
   return false;
+}
+
+function parseLastFloatMatch(output: string, pattern: RegExp): number | null {
+  const matches = Array.from(output.matchAll(pattern));
+  if (matches.length === 0) return null;
+  const raw = matches[matches.length - 1]?.[1];
+  if (!raw) return null;
+  const value = parseFloat(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function parseLastIntMatch(output: string, pattern: RegExp): number | null {
+  const matches = Array.from(output.matchAll(pattern));
+  if (matches.length === 0) return null;
+  const raw = matches[matches.length - 1]?.[1];
+  if (!raw) return null;
+  const value = parseInt(raw, 10);
+  return Number.isFinite(value) ? value : null;
 }
 
 export function runLoudnormPass1(inputPath: string): Promise<LoudnormStats> {
@@ -143,17 +173,68 @@ export function extractQaMetrics(output: string): QaMetrics | null {
   }
 }
 
+export function extractPostRenderQaMetrics(output: string): PostRenderQaMetrics | null {
+  const integratedLoudness = parseLastFloatMatch(output, /\bI:\s*(-?\d+(?:\.\d+)?)\s+LUFS/g);
+  const loudnessRange = parseLastFloatMatch(output, /\bLRA:\s*(-?\d+(?:\.\d+)?)\s+LU/g);
+  const truePeak = parseLastFloatMatch(output, /\bPeak:\s*(-?\d+(?:\.\d+)?)\s+dBFS/g);
+  const peakCount = parseLastIntMatch(output, /\bPeak count:\s*(\d+)/g);
+
+  if (integratedLoudness == null || loudnessRange == null || truePeak == null) {
+    return null;
+  }
+
+  return {
+    integratedLoudness,
+    loudnessRange,
+    truePeak,
+    peakCount,
+    clippingDetected: (peakCount ?? 0) > 0 || truePeak > TRUE_PEAK_MAX,
+    source: 'ebur128+astats',
+  };
+}
+
+export function runPostRenderQaAnalysis(inputPath: string): Promise<PostRenderQaMetrics> {
+  return new Promise((resolve, reject) => {
+    let outputData = '';
+
+    ffmpeg(inputPath)
+      .audioFilters('ebur128=peak=true,astats=metadata=1:reset=0')
+      .format('null')
+      .on('stderr', (stderrLine: string) => {
+        outputData += stderrLine;
+      })
+      .on('end', () => {
+        const metrics = extractPostRenderQaMetrics(outputData);
+        if (metrics) {
+          resolve(metrics);
+        } else {
+          reject(new Error('Failed to extract post-render QA metrics'));
+        }
+      })
+      .on('error', (err: Error) => {
+        reject(err);
+      })
+      .save('-');
+  });
+}
+
 export async function normalizeLoudness(
   inputPath: string,
   outputPath: string,
   retryCount = 0
-): Promise<QaMetrics> {
-  const stats = await runLoudnormPass1(inputPath);
-  const metrics = await runLoudnormPass2(inputPath, outputPath, stats);
+): Promise<NormalizationResult> {
+  const loudnormPass1 = await runLoudnormPass1(inputPath);
+  const loudnormPass2 = await runLoudnormPass2(inputPath, outputPath, loudnormPass1);
+  const postRender = await runPostRenderQaAnalysis(outputPath);
 
-  if (shouldRetryRender(metrics) && retryCount < MAX_RETRIES) {
+  if (shouldRetryRender(postRender) && retryCount < MAX_RETRIES) {
     return normalizeLoudness(inputPath, outputPath, retryCount + 1);
   }
 
-  return metrics;
+  return {
+    loudnormPass1,
+    loudnormPass2,
+    postRender,
+    retryCount,
+  };
 }

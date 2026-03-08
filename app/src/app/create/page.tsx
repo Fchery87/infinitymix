@@ -16,6 +16,11 @@ import { getPublicAudioPipelineFeatureFlags } from '@/lib/audio/feature-flags';
 import { startResumableUpload, buildTusMetadata } from '@/lib/audio/resumable-upload';
 import { collectBrowserAnalysisHintsForUpload } from '@/lib/audio/browser-analysis/client';
 import {
+  assignAudioRolloutVariant,
+  buildUploadRolloutStableKey,
+  type AudioRolloutOverride,
+} from '@/lib/audio/rollouts';
+import {
   buildTransitionAutomationPlan,
   createPreviewGraph,
   getPreviewGraphCapabilities,
@@ -66,6 +71,19 @@ type StylePackOption = {
 type MixMode = 'standard' | 'stem_mashup' | 'auto_dj';
 type TrackAnalysisFilter = 'all' | 'browser_hint' | 'standard';
 
+type PublicPipelineConfig = {
+  featureFlags: ReturnType<typeof getPublicAudioPipelineFeatureFlags>;
+  rollouts: {
+    section_tagging: {
+      domain: 'section_tagging';
+      featureEnabled: boolean;
+      candidatePercent: number;
+      salt: string;
+      override: AudioRolloutOverride | null;
+    };
+  };
+};
+
 export default function CreatePage() {
   const audioFeatureFlags = getPublicAudioPipelineFeatureFlags();
   const [isAuthenticated] = useState(true); // Auto-logged in for development
@@ -90,6 +108,7 @@ export default function CreatePage() {
   const [transitionStyles, setTransitionStyles] = useState<TransitionStyleOption[]>([]);
   const [stylePacks, setStylePacks] = useState<StylePackOption[]>([]);
   const [selectedStylePackId, setSelectedStylePackId] = useState<string | null>(null);
+  const [audioPipelineConfig, setAudioPipelineConfig] = useState<PublicPipelineConfig | null>(null);
   
   // Project-related state
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -256,6 +275,28 @@ export default function CreatePage() {
       browserPreviewGraphRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPipelineConfig = async () => {
+      try {
+        const response = await fetch('/api/audio/pipeline-config', { cache: 'no-store' });
+        if (!response.ok) throw new Error('Failed to load audio pipeline config');
+        const json = (await response.json()) as PublicPipelineConfig;
+        if (!cancelled) setAudioPipelineConfig(json);
+      } catch (error) {
+        if (!cancelled) {
+          console.error(error);
+          setAudioPipelineConfig(null);
+        }
+      }
+    };
+
+    void loadPipelineConfig();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
  
   useEffect(() => {
     const shouldPoll = uploadedTracks.some((track) => track.analysis_status === 'pending' || track.analysis_status === 'analyzing');
@@ -276,19 +317,50 @@ export default function CreatePage() {
     const upload = async () => {
       try {
         const filesArray = Array.from(files);
-        let browserAnalysisHints: Awaited<
+        const browserAnalysisHints: Awaited<
           ReturnType<typeof collectBrowserAnalysisHintsForUpload>
         > = [];
 
         if (audioFeatureFlags.browserAnalysisWorker) {
           setPreAnalysisMessage('Running browser pre-analysis...');
-          browserAnalysisHints = await collectBrowserAnalysisHintsForUpload(
-            filesArray,
-            {
+          const sectionTaggingRollout = audioPipelineConfig?.rollouts.section_tagging;
+          for (const file of filesArray) {
+            const stableKey = buildUploadRolloutStableKey(file.name, file.size);
+            const rolloutAssignment = assignAudioRolloutVariant({
+              domain: 'section_tagging',
+              stableKey,
+              config: {
+                domain: 'section_tagging',
+                featureEnabled:
+                  sectionTaggingRollout?.featureEnabled ?? audioFeatureFlags.mlSectionTagging,
+                candidatePercent: sectionTaggingRollout?.candidatePercent ?? 0,
+                salt: sectionTaggingRollout?.salt ?? 'section-tagging-v1',
+                defaultVariant: 'control',
+              },
+              override: sectionTaggingRollout?.override ?? null,
+            });
+            const [hint] = await collectBrowserAnalysisHintsForUpload([file], {
               enabled: true,
-              mlSectionTagging: audioFeatureFlags.mlSectionTagging,
+              mlSectionTagging:
+                audioFeatureFlags.mlSectionTagging &&
+                rolloutAssignment.variant === 'candidate',
+            });
+            if (hint) {
+              if (hint.analysisFeatures?.sectionTagging) {
+                hint.analysisFeatures.sectionTagging.rollout = {
+                  variant: rolloutAssignment.variant,
+                  source: rolloutAssignment.source,
+                  bucket: rolloutAssignment.bucket,
+                  stableKey: rolloutAssignment.stableKey,
+                };
+              }
+              if (hint.featureSummary) {
+                hint.featureSummary.mlSectionTaggingRolloutVariant = rolloutAssignment.variant;
+                hint.featureSummary.mlSectionTaggingRolloutSource = rolloutAssignment.source;
+              }
+              browserAnalysisHints.push(hint);
             }
-          );
+          }
           if (browserAnalysisHints.length > 0) {
             setPreAnalysisMessage(
               `Browser pre-analysis complete for ${browserAnalysisHints.length}/${filesArray.length} file(s). Uploading...`

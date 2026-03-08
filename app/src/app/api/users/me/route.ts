@@ -209,6 +209,7 @@ export async function DELETE(request: NextRequest) {
       .select({ 
         id: mashups.id, 
         outputStorageUrl: mashups.outputStorageUrl,
+        publicPlaybackUrl: mashups.publicPlaybackUrl,
         previewStorageUrl: mashups.previewStorageUrl,
       })
       .from(mashups)
@@ -221,6 +222,13 @@ export async function DELETE(request: NextRequest) {
           await storage.deleteFile(mashup.outputStorageUrl);
         } catch (error) {
           log('warn', 'user.delete.mashup.output.failed', { userId, mashupId: mashup.id, error: (error as Error).message });
+        }
+      }
+      if (mashup.publicPlaybackUrl) {
+        try {
+          await storage.deleteFile(mashup.publicPlaybackUrl);
+        } catch (error) {
+          log('warn', 'user.delete.mashup.playback.failed', { userId, mashupId: mashup.id, error: (error as Error).message });
         }
       }
       if (mashup.previewStorageUrl) {

@@ -64,6 +64,12 @@ type SectionTaggingResult = {
   attempted: boolean;
   backend: 'webgpu' | 'wasm' | 'heuristic' | 'none';
   status: 'success' | 'fallback' | 'disabled' | 'unavailable';
+  timing?: {
+    totalMs?: number | null;
+    modelLoadMs?: number | null;
+    inferenceMs?: number | null;
+  };
+  fallbackReason?: string | null;
   model?: string | null;
   error?: string | null;
   tags: SectionTag[];
@@ -113,7 +119,7 @@ function computeWaveformLite(samples: Float32Array, targetBins = 128) {
   return bins;
 }
 
-function computeEnergyEnvelope(samples: Float32Array, sampleRate: number) {
+function computeEnergyEnvelope(samples: Float32Array) {
   const frameSize = 1024;
   const hopSize = 512;
   const energies: number[] = [];
@@ -407,12 +413,15 @@ async function tryTransformersSectionTags(
   structure: Array<{ label: string; start: number; end: number; confidence: number }>,
   heuristicTags: SectionTag[]
 ): Promise<SectionTaggingResult> {
+  const startedAt = performance.now();
   if (!enabled) {
     return {
       enabled: false,
       attempted: false,
       backend: 'none',
       status: 'disabled',
+      timing: { totalMs: 0, modelLoadMs: 0, inferenceMs: 0 },
+      fallbackReason: 'feature_disabled',
       tags: heuristicTags,
     };
   }
@@ -424,12 +433,19 @@ async function tryTransformersSectionTags(
       attempted: false,
       backend: capability.backend,
       status: 'unavailable',
+      timing: {
+        totalMs: Number((performance.now() - startedAt).toFixed(2)),
+        modelLoadMs: 0,
+        inferenceMs: 0,
+      },
+      fallbackReason: 'no_sections_available',
       error: 'No sections available for tagging',
       tags: [],
     };
   }
 
   try {
+    const modelLoadStartedAt = performance.now();
     const mod = (await dynamicImport('@huggingface/transformers')) as Record<string, unknown>;
     const env = mod.env as Record<string, unknown> | undefined;
     if (env && typeof env === 'object') {
@@ -452,6 +468,12 @@ async function tryTransformersSectionTags(
         attempted: false,
         backend: 'heuristic',
         status: 'fallback',
+        timing: {
+          totalMs: Number((performance.now() - startedAt).toFixed(2)),
+          modelLoadMs: Number((performance.now() - modelLoadStartedAt).toFixed(2)),
+          inferenceMs: 0,
+        },
+        fallbackReason: 'pipeline_factory_unavailable',
         error: 'Transformers pipeline factory unavailable',
         tags: heuristicTags,
       };
@@ -463,9 +485,11 @@ async function tryTransformersSectionTags(
       device: capability.backend === 'webgpu' ? 'webgpu' : 'wasm',
       quantized: true,
     })) as ((audio: Float32Array, opts?: Record<string, unknown>) => Promise<Array<{ label: string; score: number }>>);
+    const modelLoadMs = Number((performance.now() - modelLoadStartedAt).toFixed(2));
 
     const tags = [...heuristicTags];
     const maxMlSections = Math.min(2, structure.length);
+    const inferenceStartedAt = performance.now();
     for (let i = 0; i < maxMlSections; i++) {
       const s = structure[i];
       const start = Math.max(0, Math.floor(s.start * sampleRate));
@@ -489,6 +513,12 @@ async function tryTransformersSectionTags(
       attempted: true,
       backend: capability.backend,
       status: 'success',
+      timing: {
+        totalMs: Number((performance.now() - startedAt).toFixed(2)),
+        modelLoadMs,
+        inferenceMs: Number((performance.now() - inferenceStartedAt).toFixed(2)),
+      },
+      fallbackReason: null,
       model,
       tags,
     };
@@ -498,6 +528,12 @@ async function tryTransformersSectionTags(
       attempted: true,
       backend: capability.backend,
       status: 'fallback',
+      timing: {
+        totalMs: Number((performance.now() - startedAt).toFixed(2)),
+        modelLoadMs: null,
+        inferenceMs: null,
+      },
+      fallbackReason: error instanceof Error ? error.message : 'transformers_section_tagging_failed',
       error: error instanceof Error ? error.message : 'Transformers section tagging failed',
       tags: heuristicTags,
     };
@@ -697,7 +733,7 @@ async function analyzePcm(payload: AnalyzePayload): Promise<BrowserAnalysisHint>
   const sampleRate = payload.sampleRate;
   const durationSeconds = samples.length > 0 ? Number((samples.length / sampleRate).toFixed(2)) : null;
 
-  const { envelope, hopSize } = computeEnergyEnvelope(samples, sampleRate);
+  const { envelope, hopSize } = computeEnergyEnvelope(samples);
   const waveformLite = computeWaveformLite(samples);
   const fallbackBpm = estimateBpmFallback(envelope, sampleRate, hopSize);
   const key = estimateKey(samples, sampleRate);
@@ -806,6 +842,10 @@ async function analyzePcm(payload: AnalyzePayload): Promise<BrowserAnalysisHint>
       mlSectionTaggingEnabled: Boolean(payload.flags?.mlSectionTagging),
       mlSectionTaggingBackend: sectionTagging.backend,
       mlSectionTaggingStatus: sectionTagging.status,
+      mlSectionTaggingTotalMs: sectionTagging.timing?.totalMs ?? null,
+      mlSectionTaggingModelLoadMs: sectionTagging.timing?.modelLoadMs ?? null,
+      mlSectionTaggingInferenceMs: sectionTagging.timing?.inferenceMs ?? null,
+      mlSectionTaggingFallbackReason: sectionTagging.fallbackReason ?? null,
       beatDetectorAvailable: payload.externalBpm != null,
     },
     confidence: {

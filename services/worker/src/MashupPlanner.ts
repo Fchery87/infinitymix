@@ -1,4 +1,4 @@
-import { logger } from './utils/logger'
+﻿import { logger } from './utils/logger'
 import { config as serviceConfig } from './utils/config'
 import { emitTelemetry, withTelemetry } from './utils/telemetry'
 import { evaluatePlannerRules } from './planning/rules-engine'
@@ -17,6 +17,7 @@ interface MashupTrack {
   isInstrumental?: boolean
   position: number
   plannerDebugTrace?: boolean
+  plannerVariant?: 'control' | 'candidate'
 }
 
 interface MashupConfig {
@@ -25,6 +26,7 @@ interface MashupConfig {
   userId: string
   mashupId: string
   plannerDebugTrace?: boolean
+  plannerVariant?: 'control' | 'candidate'
 }
 
 interface TimelineSegment {
@@ -53,6 +55,7 @@ interface TimelinePlan {
     algorithm: 'harmonic_vocal_priority_v1' | 'harmonic_vocal_priority_v1_rules'
     ruleBasedPlannerEnabled?: boolean
     plannerDebugTraceEnabled?: boolean
+    plannerVariant?: 'control' | 'candidate'
     rulePackId?: string
     decisionTraces?: PlannerDecisionTrace[]
     ruleEvaluations?: number
@@ -89,14 +92,15 @@ export class MashupPlanner {
       trackCount: config.tracks.length,
       targetDuration: config.targetDuration,
       mashupId: config.mashupId,
-      ruleBasedPlannerEnabled: serviceConfig.featureFlags.ruleBasedPlanner
+      ruleBasedPlannerEnabled: serviceConfig.featureFlags.ruleBasedPlanner,
+      plannerVariant: config.plannerVariant ?? null
     }
 
     logger.info('Starting mashup planning', plannerInput)
 
     return withTelemetry('planner', 'plan_mashup', async () => {
       try {
-        const ruleBasedEnabled = serviceConfig.featureFlags.ruleBasedPlanner
+        const ruleBasedEnabled = config.plannerVariant ? config.plannerVariant === 'candidate' : serviceConfig.featureFlags.ruleBasedPlanner
         const plannerDebugTraceEnabled = ruleBasedEnabled && (config.plannerDebugTrace ?? serviceConfig.featureFlags.plannerDebugTrace)
         const rulePack = getPlannerRulePack(serviceConfig.planner.rulePackId)
         if (!rulePack) {
@@ -643,3 +647,6 @@ export class MashupPlanner {
     return Math.min(confidence, 1.0)
   }
 }
+
+
+

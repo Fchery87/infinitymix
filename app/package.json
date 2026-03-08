@@ -13,6 +13,9 @@
     "load:test": "node scripts/load-test.mjs",
     "baseline:audio:capture": "node scripts/capture-audio-baseline.mjs",
     "baseline:audio:compare": "node scripts/compare-audio-baseline.mjs",
+    "phase2:review:template": "node scripts/generate-phase2-review-template.mjs",
+    "phase2:review:evaluate": "node scripts/evaluate-phase2-review.mjs",
+    "phase2:signoff:report": "node scripts/generate-phase2-signoff-report.mjs",
     "test": "vitest",
     "verify": "node scripts/verify-infrastructure.mjs"
   },

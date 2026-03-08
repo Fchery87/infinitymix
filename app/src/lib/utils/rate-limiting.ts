@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getSessionUser } from '@/lib/auth/session';
+import { isAdminUser } from '@/lib/auth/admin';
 
 interface RateLimitConfig {
   windowMs: number;
@@ -132,6 +134,11 @@ export function createRateLimiter(config: RateLimitConfig): RateLimiter {
 export function withRateLimit(rateLimiter: RateLimiter) {
   return function<TArgs extends unknown[]>(handler: Handler<TArgs>) {
     return async (request: NextRequest, ...args: TArgs) => {
+      const user = await getSessionUser(request);
+      if (user && isAdminUser(user)) {
+        return handler(request, ...args);
+      }
+
       const rateLimitResponse = rateLimiter(request);
       if (rateLimitResponse) {
         return rateLimitResponse;

@@ -17,6 +17,8 @@ type Mashup = {
   status: 'pending' | 'queued' | 'generating' | 'completed' | 'failed';
   output_path: string | null;
   output_format: string | null;
+  playback_path?: string | null;
+  playback_format?: string | null;
   generation_time_ms: number | null;
   playback_count: number;
   download_count: number;
@@ -151,7 +153,10 @@ export default function MashupsPage() {
     }
   };
 
-  const handleDownload = async (mashupId: string) => {
+  const handleDownload = async (
+    mashupId: string,
+    variant: 'master' | 'playback'
+  ) => {
     const mashup = mashups.find((m) => m.id === mashupId);
     if (!mashup || mashup.status !== 'completed' || !mashup.output_path) {
       alert('Mashup is not ready for download yet.');
@@ -159,8 +164,11 @@ export default function MashupsPage() {
     }
 
     try {
-      setDownloadingId(mashupId);
-      const response = await fetch(`/api/mashups/${mashupId}/download`);
+      const downloadKey = `${mashupId}:${variant}`;
+      setDownloadingId(downloadKey);
+      const response = await fetch(
+        `/api/mashups/${mashupId}/download?variant=${variant}`
+      );
       if (!response.ok) {
         const data = await response.json().catch(() => null);
         throw new Error(data?.error || 'Failed to download mashup');
@@ -170,7 +178,11 @@ export default function MashupsPage() {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `${mashup.name}.${mashup.output_format || 'wav'}`;
+      const extension =
+        variant === 'master'
+          ? mashup.output_format || 'wav'
+          : mashup.playback_format || 'mp3';
+      link.download = `${mashup.name}.${extension}`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -526,11 +538,11 @@ export default function MashupsPage() {
                               <Button 
                                 variant="outline" 
                                 size="sm"
-                                onClick={() => handleDownload(mashup.id)}
-                                disabled={downloadingId === mashup.id}
+                                onClick={() => handleDownload(mashup.id, 'master')}
+                                disabled={downloadingId === `${mashup.id}:master`}
                                 className="border-white/10 hover:bg-primary/10 hover:text-primary hover:border-primary/30"
                               >
-                                {downloadingId === mashup.id ? (
+                                {downloadingId === `${mashup.id}:master` ? (
                                   <div className="flex items-center">
                                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
                                     Preparing
@@ -538,7 +550,26 @@ export default function MashupsPage() {
                                 ) : (
                                   <>
                                     <Download className="w-4 h-4 mr-2" />
-                                    Download
+                                    WAV
+                                  </>
+                                )}
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleDownload(mashup.id, 'playback')}
+                                disabled={downloadingId === `${mashup.id}:playback`}
+                                className="border-white/10 hover:bg-primary/10 hover:text-primary hover:border-primary/30"
+                              >
+                                {downloadingId === `${mashup.id}:playback` ? (
+                                  <div className="flex items-center">
+                                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                                    Preparing
+                                  </div>
+                                ) : (
+                                  <>
+                                    <Download className="w-4 h-4 mr-2" />
+                                    MP3
                                   </>
                                 )}
                               </Button>

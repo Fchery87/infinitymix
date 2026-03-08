@@ -68,6 +68,7 @@ type ToneLike = {
     dispose?: () => void;
     volume?: { value: number };
     playbackRate?: number;
+    loaded?: boolean;
   };
 };
 
@@ -109,6 +110,19 @@ type PreviewAutomationEnvelope = {
   reverbWet?: EnvelopePoint[];
   playbackRate?: EnvelopePoint[];
 };
+
+export async function ensurePreviewPlayerLoaded(
+  player: {
+    load?: (url: string) => Promise<unknown>;
+    loaded?: boolean;
+  },
+  url: string
+) {
+  if (player.loaded) return;
+  if (typeof player.load === 'function') {
+    await player.load(url);
+  }
+}
 
 export function getPreviewGraphCapabilities(): PreviewGraphCapabilities {
   const webAudioAvailable =
@@ -380,21 +394,19 @@ export async function createPreviewGraph(): Promise<PreviewGraph> {
     const loadPlayers = async (input: { vocalUrl?: string | null; instrumentalUrl?: string | null }) => {
       if (input.vocalUrl) {
         if (!vocalPlayer) {
-          vocalPlayer = new Tone.Player({ url: input.vocalUrl, autostart: false, loop: false });
+          vocalPlayer = new Tone.Player({ autostart: false, loop: false });
           vocalPlayer.connect(vocalBus);
           vocalPlayer.connect(fxSendBus);
-        } else if (typeof vocalPlayer.load === 'function') {
-          await vocalPlayer.load(input.vocalUrl);
         }
+        await ensurePreviewPlayerLoaded(vocalPlayer, input.vocalUrl);
       }
       if (input.instrumentalUrl) {
         if (!instrumentalPlayer) {
-          instrumentalPlayer = new Tone.Player({ url: input.instrumentalUrl, autostart: false, loop: false });
+          instrumentalPlayer = new Tone.Player({ autostart: false, loop: false });
           instrumentalPlayer.connect(instrumentalBus);
           instrumentalPlayer.connect(fxSendBus);
-        } else if (typeof instrumentalPlayer.load === 'function') {
-          await instrumentalPlayer.load(input.instrumentalUrl);
         }
+        await ensurePreviewPlayerLoaded(instrumentalPlayer, input.instrumentalUrl);
       }
     };
 

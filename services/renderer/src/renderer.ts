@@ -1,4 +1,4 @@
-import { Worker, Job } from 'bullmq'
+import { Worker, Job, Queue } from 'bullmq'
 import { Redis } from 'ioredis'
 import { AudioRenderer } from './AudioRenderer'
 import { logger } from './utils/logger'
@@ -30,12 +30,16 @@ interface RenderingJobData {
 
 class RendererWorker {
   private worker: Worker<RenderingJobData>
+  private queue: Queue<RenderingJobData>
   private connection: Redis
   private audioRenderer: AudioRenderer
 
   constructor() {
     this.connection = new Redis(config.queue.redis)
     this.audioRenderer = new AudioRenderer()
+    this.queue = new Queue('audio-rendering', {
+      connection: this.connection,
+    })
     
     this.worker = new Worker(
       'audio-rendering',
@@ -92,7 +96,8 @@ class RendererWorker {
       const renderStartTime = Date.now()
 
       // Render the mashup using FFmpeg and audio processing
-      const outputUrl = await this.audioRenderer.renderMashup(mashupId, timelinePlan)
+      const renderResult = await this.audioRenderer.renderMashup(mashupId, timelinePlan)
+      const outputUrl = renderResult.storageUrl
       
       // Get file size for database
       const { PrismaClient } = require('@prisma/client')
@@ -128,10 +133,16 @@ class RendererWorker {
         }
       }
 
-      // Update mashup record with completed output
-      await this.audioRenderer.updateMashupOutput(mashupId, outputUrl, outputFileSize)
-
       const renderDuration = Date.now() - renderStartTime
+
+      // Update mashup record with completed output and explicit render QA metrics
+      await this.audioRenderer.updateMashupOutput(
+        mashupId,
+        outputUrl,
+        outputFileSize,
+        renderDuration,
+        renderResult.renderQa
+      )
       
       await prisma.$disconnect()
 
@@ -140,13 +151,15 @@ class RendererWorker {
         mashupId,
         outputUrl,
         outputFileSize,
-        renderDuration: `${renderDuration}ms`
+        renderDuration: `${renderDuration}ms`,
+        renderQa: renderResult.renderQa.postRender,
       })
 
       return {
         outputUrl,
         outputFileSize,
         renderDuration,
+        renderQa: renderResult.renderQa.postRender,
         status: 'COMPLETED'
       }
     } catch (error) {
@@ -171,18 +184,13 @@ class RendererWorker {
    */
   async getQueueStats() {
     try {
-      const [waiting, active, completed, failed] = await Promise.all([
-        this.worker.getWaiting(),
-        this.worker.getActive(),
-        this.worker.getCompleted(),
-        this.worker.getFailed()
-      ])
+      const counts = await this.queue.getJobCounts('waiting', 'active', 'completed', 'failed')
 
       return {
-        waiting: waiting.length,
-        active: active.length,
-        completed: completed.length,
-        failed: failed.length
+        waiting: counts.waiting ?? 0,
+        active: counts.active ?? 0,
+        completed: counts.completed ?? 0,
+        failed: counts.failed ?? 0
       }
     } catch (error) {
       logger.error('Error getting renderer stats:', error)
@@ -195,7 +203,7 @@ class RendererWorker {
    */
   async getCurrentJob(): Promise<{ id: string; data: RenderingJobData } | null> {
     try {
-      const active = await this.worker.getActive()
+      const active = await this.queue.getJobs(['active'], 0, 0, true)
       return active.length > 0 ? { id: active[0].id!, data: active[0].data } : null
     } catch (error) {
       logger.error('Error getting current renderer job:', error)
@@ -227,6 +235,7 @@ class RendererWorker {
    */
   async close() {
     await this.worker.close()
+    await this.queue.close()
     await this.connection.quit()
     logger.info('Renderer worker closed')
   }

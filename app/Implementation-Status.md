@@ -2,6 +2,9 @@
 
 Status snapshot against `Detailed-Analysis-Implementation-Plan.md`.
 
+`Detailed-Analysis-Execution-Tracker.md` is now the authoritative live execution document.
+This file is a summary and may lag behind the tracker.
+
 Legend:
 - `[x]` Implemented
 - `[-]` Partially implemented
@@ -15,8 +18,8 @@ Last updated: 2026-02-23
 - Phase 1: `[x]` Implemented (browser worker, confidence-gated fallback, and persisted MIR feature workflow active)
 - Phase 2: `[-]` In progress (section-tagging worker + Tone.js preview graph abstraction implemented; full production integration still pending)
 - Phase 3: `[-]` Substantially Complete
-- Phase 4: `[ ]` Not started
-- Phase 5: `[-]` Partially complete (observability/admin rollout tooling done, reliability features not yet)
+- Phase 4: `[-]` Substantially complete
+- Phase 5: `[-]` Partially complete (observability/admin rollout tooling done; resumable upload path now implemented; rollout tuning still incomplete)
 
 ## Cross-Cutting Completed Work (Extra / Ahead of Plan)
 
@@ -126,10 +129,10 @@ Last updated: 2026-02-23
 ## Phase 4: Refinement Loop and Quality Enforcement
 
 ### Tasks
-- `[ ]` FFmpeg two-pass `loudnorm`
-- `[ ]` Post-render QA analysis (`ebur128`, `astats`)
-- `[ ]` Bounded corrective retry policy
-- `[ ]` Loudness/QA metrics surfaced in job logs/history
+- `[x]` FFmpeg two-pass `loudnorm`
+- `[x]` Post-render QA analysis (`ebur128`, `astats`)
+- `[x]` Bounded corrective retry policy
+- `[x]` Loudness/QA metrics surfaced in mashup retrieval APIs via `render_qa`
 
 ### Exit Criteria
 - `[ ]` Loudness targets consistently met on QA fixture set
@@ -140,10 +143,11 @@ Last updated: 2026-02-23
 > **Note:** Admin observability dashboards are complete (see Cross-Cutting Completed Work section above).
 
 ### Tasks
-- `[ ]` Resumable uploads (`tus-js-client`)
+- `[x]` Resumable uploads (`tus-js-client`)
 - `[ ]` Worker memory tuning + model asset caching/OPFS strategy
-- `[-]` Confidence threshold and fallback policy tuning (initial thresholds implemented; tuning workflow ongoing)
-- `[ ]` A/B testing planner and section-tagging variants
+- `[x]` Confidence threshold and fallback policy tuning workflow (env-configurable thresholds + observability surfaced + documented process)
+- `[x]` Deterministic rollout support for planner and section-tagging variants with admin overrides
+- `[x]` Validation instrumentation for browser section-tagging startup/fallbacks and mashup planning/render timing
 
 ### Reliability / Observability Items (Completed or Partial)
 - `[x]` Worker failure / fallback observability hooks (admin dashboards, metrics, reason counts)

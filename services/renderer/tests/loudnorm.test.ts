@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { parseLoudnormStats, buildLoudnormPass2Filter, shouldRetryRender, type LoudnormStats, type QaMetrics } from '../src/loudnorm';
+import {
+  parseLoudnormStats,
+  buildLoudnormPass2Filter,
+  extractPostRenderQaMetrics,
+  shouldRetryRender,
+  type LoudnormStats,
+  type QaMetrics,
+} from '../src/loudnorm';
 
 describe('parseLoudnormStats', () => {
   it('parses valid loudnorm JSON output', () => {
@@ -87,5 +94,34 @@ describe('shouldRetryRender', () => {
       clippingDetected: true,
     };
     expect(shouldRetryRender(metrics)).toBe(true);
+  });
+});
+
+describe('extractPostRenderQaMetrics', () => {
+  it('parses ebur128 and astats summary output', () => {
+    const output = `
+      [Parsed_ebur128_0 @ 000001] Summary:
+      Integrated loudness:
+        I:         -14.2 LUFS
+        Threshold: -24.3 LUFS
+      Loudness range:
+        LRA:        5.1 LU
+        Threshold: -34.2 LUFS
+      True peak:
+        Peak:      -1.3 dBFS
+      [Parsed_astats_1 @ 000001] Peak count: 0
+    `;
+
+    const metrics = extractPostRenderQaMetrics(output);
+    expect(metrics).not.toBeNull();
+    expect(metrics!.integratedLoudness).toBeCloseTo(-14.2);
+    expect(metrics!.loudnessRange).toBeCloseTo(5.1);
+    expect(metrics!.truePeak).toBeCloseTo(-1.3);
+    expect(metrics!.peakCount).toBe(0);
+    expect(metrics!.clippingDetected).toBe(true);
+  });
+
+  it('returns null when required values are missing', () => {
+    expect(extractPostRenderQaMetrics('Peak count: 0')).toBeNull();
   });
 });

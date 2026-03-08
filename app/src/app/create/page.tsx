@@ -771,10 +771,30 @@ export default function CreatePage() {
     setIsPreviewing(true);
     setPreviewUrl(null);
     try {
+      const trackA = completedTracks.find(t => t.id === selectedTrackIds[0]) || completedTracks[0];
+      const trackB = completedTracks.find(t => t.id === selectedTrackIds[1]) || completedTracks[0];
+      const style = (crossfadeEnabled ? crossfadeStyle : autoDjTransitionStyle) as import('@/lib/audio/preview-graph').PreviewTransitionStyle;
+      const overlapSeconds = Math.max(1, Math.min(12, crossfadeEnabled ? crossfadeDuration : 4));
+      
+      const trackADurationStr = (trackA as any)?.duration_seconds;
+      const trackADuration = trackADurationStr ? parseFloat(trackADurationStr) : 60;
+      
+      const contract = trackA && trackB ? {
+        trackAId: trackA.id,
+        trackBId: trackB.id,
+        trackARole: 'trackA',
+        trackBRole: 'trackB',
+        mixOutCueSeconds: Math.max(0, trackADuration - overlapSeconds),
+        mixInCueSeconds: 0,
+        overlapDurationSeconds: overlapSeconds,
+        tempoRampStrategy: 'none',
+        transitionStyle: style,
+      } : undefined;
+
       const res = await fetch('/api/mashups/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ trackIds: selectedTrackIds, durationSeconds: 20 }),
+        body: JSON.stringify({ trackIds: selectedTrackIds, durationSeconds: overlapSeconds + 4, contract }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => null);
@@ -942,18 +962,33 @@ export default function CreatePage() {
 
       const style = (crossfadeEnabled ? crossfadeStyle : autoDjTransitionStyle) as PreviewTransitionStyle;
       const durationSeconds = Math.max(1, Math.min(12, crossfadeEnabled ? crossfadeDuration : 4));
-      const plan = buildTransitionAutomationPlan(style, durationSeconds);
-      await graph.playTransitionPreview(plan);
+      
+      const trackADurationStr = (trackA as any).duration_seconds;
+      const trackADuration = trackADurationStr ? parseFloat(trackADurationStr) : 60;
+      
+      const contract: import('@/lib/audio/types/transition').TransitionExecutionContract = {
+        trackAId: trackA.id,
+        trackBId: trackB.id,
+        trackARole: 'trackA',
+        trackBRole: 'trackB',
+        mixOutCueSeconds: Math.max(0, trackADuration - durationSeconds),
+        mixInCueSeconds: 0,
+        overlapDurationSeconds: durationSeconds,
+        tempoRampStrategy: 'none',
+        transitionStyle: style,
+      };
+
+      await graph.playTransitionPreview(contract);
       recordPreviewQaTelemetry('preview_started', `style:${style}`);
 
       setBrowserPreviewMessage(
-        `Browser FX preview: ${trackA.original_filename} -> ${trackB.original_filename} (${style}, ${plan.durationSeconds.toFixed(1)}s)`
+        `Browser FX preview: ${trackA.original_filename} -> ${trackB.original_filename} (${style}, ${durationSeconds.toFixed(1)}s)`
       );
 
       clearBrowserPreviewTimer();
       browserPreviewTimerRef.current = setTimeout(() => {
         setIsBrowserPreviewing(false);
-      }, Math.ceil((plan.durationSeconds + 2) * 1000));
+      }, Math.ceil((durationSeconds + 2) * 1000));
     } catch (error) {
       setIsBrowserPreviewing(false);
       setBrowserPreviewMessage(error instanceof Error ? error.message : 'Failed to run browser FX preview');

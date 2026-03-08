@@ -32,12 +32,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Content-Type must be application/json' }, { status: 415 });
     }
 
-    const { trackIds, durationSeconds, mixMode = 'standard' } = await request.json();
+    const { trackIds, durationSeconds, contract, mixMode = 'standard' } = await request.json();
     if (!Array.isArray(trackIds) || trackIds.length < 2) {
       return NextResponse.json({ error: 'At least 2 trackIds required' }, { status: 400 });
     }
 
-    const safeDuration = Math.min(MAX_DURATION, Math.max(10, Number(durationSeconds) || 20));
+    const safeDuration = contract ? contract.overlapDurationSeconds + 2 : Math.min(MAX_DURATION, Math.max(10, Number(durationSeconds) || 20));
     const previewIdempotencyKey = buildPreviewGenerationIdempotencyKey({
       userId: user.id,
       trackIds,
@@ -55,20 +55,43 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'One or more tracks not found' }, { status: 404 });
     }
 
+    // Reorder records to match trackIds
+    const orderedRecords = trackIds.map((id) => records.find((r) => r.id === id)!);
+
     const storage = await getStorage();
     if (!storage.getFile) return NextResponse.json({ error: 'Storage driver cannot read files' }, { status: 500 });
 
     const tracks: TrackForMixing[] = [];
     const buffers: Buffer[] = [];
-    for (const r of records) {
+    for (const r of orderedRecords) {
       const fetched = await storage.getFile(r.storageUrl);
       if (!fetched?.buffer) return NextResponse.json({ error: 'Failed to fetch track audio' }, { status: 500 });
       buffers.push(fetched.buffer);
       tracks.push({ id: r.id, storageUrl: r.storageUrl, mimeType: fetched.mimeType || r.mimeType, bpm: r.bpm ? Number(r.bpm) : null, buffer: fetched.buffer });
     }
 
-    const result = await mixToBuffer(buffers, { duration: safeDuration });
-    return new NextResponse(result.buffer, {
+    let mixingConfig: Parameters<typeof mixToBuffer>[1] = { duration: safeDuration };
+
+    if (contract) {
+      mixingConfig = {
+        duration: safeDuration,
+        inputConfigs: [
+          { startSeconds: Math.max(0, contract.mixOutCueSeconds - 1) },
+          { startSeconds: contract.mixInCueSeconds },
+        ],
+        transitions: [
+          {
+            fromIdx: 0,
+            toIdx: 1,
+            duration: contract.overlapDurationSeconds,
+            style: contract.transitionStyle || 'smooth',
+          },
+        ],
+      };
+    }
+
+    const result = await mixToBuffer(buffers, mixingConfig);
+    return new NextResponse(result.buffer as any, {
       status: 200,
       headers: {
         'Content-Type': 'audio/mpeg',

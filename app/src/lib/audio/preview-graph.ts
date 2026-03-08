@@ -317,8 +317,8 @@ export type PreviewGraph = {
   capabilities: PreviewGraphCapabilities;
   loadPlayers: (input: { vocalUrl?: string | null; instrumentalUrl?: string | null }) => Promise<void>;
   setMix: (params: { vocalGain?: number; instrumentalGain?: number; wetFx?: number }) => void;
-  applyTransitionAutomation: (plan: PreviewTransitionAutomationPlan) => Promise<void>;
-  playTransitionPreview: (plan: PreviewTransitionAutomationPlan) => Promise<void>;
+  applyTransitionAutomation: (plan: PreviewTransitionAutomationPlan, overrideStartAt?: number) => Promise<void>;
+  playTransitionPreview: (contract: import('./types/transition').TransitionExecutionContract) => Promise<void>;
   stopPlayback: () => void;
   dispose: () => void;
 };
@@ -458,10 +458,10 @@ export async function createPreviewGraph(): Promise<PreviewGraph> {
       resetPlaybackState();
     };
 
-    const applyTransitionAutomation = async (plan: PreviewTransitionAutomationPlan) => {
+    const applyTransitionAutomation = async (plan: PreviewTransitionAutomationPlan, overrideStartAt?: number) => {
       const now = Tone.now();
       const safeDuration = Math.max(0.1, plan.durationSeconds);
-      const startAt = now + 0.02;
+      const startAt = overrideStartAt ?? (now + 0.02);
       const envelope = getAutomationEnvelope(plan);
       const scheduleParamEnvelope = (
         param: AutomatableParam | undefined,
@@ -505,7 +505,7 @@ export async function createPreviewGraph(): Promise<PreviewGraph> {
       });
     };
 
-    const playTransitionPreview = async (plan: PreviewTransitionAutomationPlan) => {
+    const playTransitionPreview = async (contract: import('./types/transition').TransitionExecutionContract) => {
       if (!vocalPlayer || !instrumentalPlayer) {
         throw new Error('Preview graph players are not loaded');
       }
@@ -514,15 +514,29 @@ export async function createPreviewGraph(): Promise<PreviewGraph> {
       stopPlayback();
 
       const startAt = Tone.now() + 0.05;
-      const playbackSeconds = Math.max(1.5, plan.durationSeconds + 1.5);
+      const overlapSeconds = contract.overlapDurationSeconds;
+      const leadInSeconds = 2; 
+      const playbackSeconds = Math.max(1.5, overlapSeconds + 1.5) + leadInSeconds;
 
-      vocalPlayer.start(startAt, 0, playbackSeconds);
-      instrumentalPlayer.start(startAt, 0, playbackSeconds);
-      await applyTransitionAutomation(plan);
+      const trackATime = Math.max(0, contract.mixOutCueSeconds - leadInSeconds);
+      const trackBTime = Math.max(0, contract.mixInCueSeconds);
+
+      const plan = buildTransitionAutomationPlan(
+        (contract.transitionStyle as PreviewTransitionStyle) || 'smooth',
+        overlapSeconds
+      );
+
+      // Start track A (vocal bus) with lead-in
+      vocalPlayer.start(startAt, trackATime, playbackSeconds);
+      
+      // Start track B (instrumental bus) exactly at the overlap start relative to Tone.now
+      instrumentalPlayer.start(startAt + leadInSeconds, trackBTime, playbackSeconds - leadInSeconds);
+      
+      await applyTransitionAutomation(plan, startAt + leadInSeconds);
 
       stopPlaybackTimeout = setTimeout(() => {
         stopPlayback();
-      }, Math.ceil(playbackSeconds * 1000));
+      }, Math.ceil((playbackSeconds + 1) * 1000));
 
       emitAudioPipelineTelemetry('preview_graph.transition_preview_started', {
         area: 'preview',

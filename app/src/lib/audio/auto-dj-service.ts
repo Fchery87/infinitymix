@@ -1666,7 +1666,7 @@ export async function planAutoDjMix(
       try {
         await db
           .update(uploadedTracks)
-          .set({ cuePoints: incomingCuePoints, updatedAt: new Date() })
+          .set({ cuePoints: incomingCuePoints as any, updatedAt: new Date() })
           .where(eq(uploadedTracks.id, to.id));
       } catch (error) {
         log('warn', 'autoDj.cue.persist_failed', {
@@ -2541,6 +2541,34 @@ export async function renderAutoDjMix(
       throw new Error('Auto DJ render produced empty output');
     }
 
+    const { measureLoudness } = await import('./audio-normalizer');
+    const { evaluateRenderQA } = await import('./render-policy');
+    
+    let qaMetrics: import('./types/qa').RenderQAMetrics | undefined;
+    try {
+      const stats = await measureLoudness(result);
+      qaMetrics = {
+        integratedLoudness: stats.input_i,
+        truePeak: stats.input_tp,
+        dynamicRangeWarning: (stats.input_lra < 4),
+        clippingIncidence: stats.input_tp > 0 ? 1 : 0
+      };
+      
+      const qaAction = evaluateRenderQA(qaMetrics);
+      if (qaAction && qaAction.action === 'fail') {
+         throw new Error(`QA Failure: ${qaAction.reason} - ${qaAction.message || ''}`);
+      }
+      if (qaAction && qaAction.action === 'retry_with_new_params') {
+         log('warn', 'autoDj.qa.retry_requested', { message: qaAction.message });
+         throw new Error(`QA Retry: ${qaAction.reason} - ${qaAction.message || ''}`);
+      }
+    } catch (e) {
+      if (e instanceof Error && (e.message.startsWith('QA Retry') || e.message.startsWith('QA Failure'))) {
+         throw e;
+      }
+      log('warn', 'autoDj.qa.measurement_failed', { error: (e as Error).message });
+    }
+
     const playbackBuffer = await transcodeBufferToPlaybackMp3(
       result,
       tempDir,
@@ -2603,6 +2631,7 @@ export async function renderAutoDjMix(
             usedPrecomputedPlan: Boolean(config.plan),
           },
         },
+        qaResults: qaMetrics ? { mixMetrics: qaMetrics } : undefined,
         updatedAt: new Date(),
       })
       .where(eq(mashups.id, mashupId));
@@ -2629,6 +2658,7 @@ export async function renderAutoDjMix(
             error: (error as Error).message,
           },
         },
+        retryReason: (error as Error).message.startsWith('QA') ? (error as Error).message : undefined,
         updatedAt: new Date(),
       })
       .where(eq(mashups.id, mashupId));

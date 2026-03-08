@@ -151,6 +151,9 @@ export interface MixingConfig {
 
   // Per-stem mixing (overrides simple mixing)
   stemMixing?: StemMixingConfig;
+
+  // Track-specific start times for trimming clips
+  inputConfigs?: Array<{ startSeconds?: number }>;
 }
 
 /**
@@ -263,6 +266,7 @@ async function simpleMix(
   inputBuffers: Buffer[],
   config: MixingConfig
 ): Promise<{ buffer: Buffer; metrics: MixingMetrics }> {
+  const startedAt = Date.now();
   const fs = await import('fs/promises');
   const os = await import('os');
   const path = await import('path');
@@ -327,7 +331,13 @@ async function simpleMix(
     const command = ffmpeg();
 
     // Add all temp files as inputs
-    tempFiles.forEach((filePath) => command.input(filePath));
+    tempFiles.forEach((filePath, i) => {
+      const inputCmd = command.input(filePath);
+      const startSec = config.inputConfigs?.[i]?.startSeconds;
+      if (typeof startSec === 'number' && startSec > 0) {
+        inputCmd.inputOptions([`-ss ${startSec}`]);
+      }
+    });
 
     // Build filter chain
     const args = filterChain.buildFFmpegArgs();
@@ -402,15 +412,26 @@ async function simpleMix(
       }
     }
 
-    const processingTime = Date.now() - Date.now();
+    const processingTime = Date.now() - startedAt;
+
+    let integratedLoudness: number | undefined;
+    let truePeak: number | undefined;
+    try {
+      const stats = await measureLoudness(finalBuffer);
+      integratedLoudness = stats.input_i;
+      truePeak = stats.input_tp;
+    } catch (e) {
+      log('warn', 'mixing.qa.measure_failed', { error: (e as Error).message });
+    }
 
     const metrics: MixingMetrics = {
       processingTimeMs: processingTime,
       outputSizeBytes: finalBuffer.length,
       tracksMixed: inputBuffers.length,
       transitionsApplied: config.transitions?.length || 0,
-      peakDb: -3,
-      rmsDb: -12,
+      peakDb: truePeak ?? -3,
+      rmsDb: integratedLoudness ?? -12,
+      integratedLoudness,
     };
 
     return { buffer: finalBuffer, metrics };

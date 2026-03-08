@@ -147,6 +147,13 @@ export async function GET(request: NextRequest) {
       plannerVariantCounts: Record<string, number>;
       averagePlanningDurationMs: number | null;
       averageRenderDurationMs: number | null;
+      averageTempoStretchSeverity: number | null;
+      averageHarmonicCompatibility: number | null;
+      averageVocalCollisionSeverity: number | null;
+      averageBeatAlignmentError: number | null;
+      averageCuePointValidity: number | null;
+      averageLoudnessLufs: number | null;
+      averageTruePeakDb: number | null;
     };
     trends: {
       hourly24h: TrendPoint[];
@@ -318,9 +325,23 @@ export async function GET(request: NextRequest) {
       plannerVariantCounts: {} as Record<string, number>,
       averagePlanningDurationMs: null as number | null,
       averageRenderDurationMs: null as number | null,
+      averageTempoStretchSeverity: null as number | null,
+      averageHarmonicCompatibility: null as number | null,
+      averageVocalCollisionSeverity: null as number | null,
+      averageBeatAlignmentError: null as number | null,
+      averageCuePointValidity: null as number | null,
+      averageLoudnessLufs: null as number | null,
+      averageTruePeakDb: null as number | null,
     };
     const planningSamples: number[] = [];
     const renderSamples: number[] = [];
+    const tempoStretchSamples: number[] = [];
+    const harmonicCompatibilitySamples: number[] = [];
+    const vocalCollisionSamples: number[] = [];
+    const beatAlignmentSamples: number[] = [];
+    const cuePointSamples: number[] = [];
+    const loudnessSamples: number[] = [];
+    const truePeakSamples: number[] = [];
 
     for (const row of mashupTelemetryRows) {
       const recommendationContext =
@@ -352,10 +373,38 @@ export async function GET(request: NextRequest) {
       if (typeof renderTelemetry?.renderDurationMs === 'number') {
         renderSamples.push(renderTelemetry.renderDurationMs);
       }
+      if (typeof plannerTelemetry?.tempoStretchSeverity === 'number') {
+        tempoStretchSamples.push(plannerTelemetry.tempoStretchSeverity);
+      }
+      if (typeof plannerTelemetry?.harmonicCompatibility === 'number') {
+        harmonicCompatibilitySamples.push(plannerTelemetry.harmonicCompatibility);
+      }
+      if (typeof plannerTelemetry?.vocalCollisionSeverity === 'number') {
+        vocalCollisionSamples.push(plannerTelemetry.vocalCollisionSeverity);
+      }
+      if (typeof plannerTelemetry?.beatAlignmentError === 'number') {
+        beatAlignmentSamples.push(plannerTelemetry.beatAlignmentError);
+      }
+      if (typeof plannerTelemetry?.cuePointValidity === 'number') {
+        cuePointSamples.push(plannerTelemetry.cuePointValidity);
+      }
+      if (typeof renderTelemetry?.loudnessLufs === 'number') {
+        loudnessSamples.push(renderTelemetry.loudnessLufs);
+      }
+      if (typeof renderTelemetry?.truePeakDb === 'number') {
+        truePeakSamples.push(renderTelemetry.truePeakDb);
+      }
     }
 
     mashupGenerationMetrics.averagePlanningDurationMs = average(planningSamples);
     mashupGenerationMetrics.averageRenderDurationMs = average(renderSamples);
+    mashupGenerationMetrics.averageTempoStretchSeverity = average(tempoStretchSamples);
+    mashupGenerationMetrics.averageHarmonicCompatibility = average(harmonicCompatibilitySamples);
+    mashupGenerationMetrics.averageVocalCollisionSeverity = average(vocalCollisionSamples);
+    mashupGenerationMetrics.averageBeatAlignmentError = average(beatAlignmentSamples);
+    mashupGenerationMetrics.averageCuePointValidity = average(cuePointSamples);
+    mashupGenerationMetrics.averageLoudnessLufs = average(loudnessSamples);
+    mashupGenerationMetrics.averageTruePeakDb = average(truePeakSamples);
 
     const completedTracks = Number(totalsRaw[0]?.completedTracks ?? 0);
     const browserHintTracks = Number(totalsRaw[0]?.browserHintTracks ?? 0);

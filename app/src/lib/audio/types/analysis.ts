@@ -8,6 +8,8 @@ export type AnalysisConfidenceSnapshot = {
 
 type AudioRolloutVariant = 'control' | 'candidate';
 
+export type AnnotationProvenance = 'browser-heuristic' | 'browser-ml' | 'backend-heuristic' | 'backend-model';
+
 export type BrowserAnalysisHint = {
   source: 'browser-worker';
   version: 'browser-v1';
@@ -22,10 +24,17 @@ export type BrowserAnalysisHint = {
   keyConfidence: number | null;
   phraseConfidence: number | null;
   sectionConfidence: number | null;
+  downbeatGrid?: number[];
   beatGrid?: number[];
   phrases?: Array<{ start: number; end: number; energy: number }>;
-  structure?: Array<{ label: string; start: number; end: number; confidence: number }>;
+  structure?: Array<{ label: string; start: number; end: number; confidence: number; provenance: AnnotationProvenance }>;
   dropMoments?: number[];
+  cuePoints?: Array<{
+    position: number;
+    type: 'mix-in' | 'mix-out' | 'drop' | 'breakdown';
+    confidence: number;
+    provenance: AnnotationProvenance;
+  }>;
   waveformLite?: number[];
   analysisFeatures?: {
     version: 'mir-v1';

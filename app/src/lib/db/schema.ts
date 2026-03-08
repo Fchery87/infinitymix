@@ -259,24 +259,25 @@ export const uploadedTracks = pgTable('uploaded_tracks', {
       crest?: number | null;
     };
   }>(),
+  downbeatGrid: jsonb('downbeat_grid').$type<number[]>(),
   beatGrid: jsonb('beat_grid').$type<number[]>(),
   structure:
     jsonb('structure').$type<
-      Array<{ label: string; start: number; end: number; confidence: number }>
+      Array<{ label: string; start: number; end: number; confidence: number; provenance: 'browser-heuristic' | 'browser-ml' | 'backend-heuristic' | 'backend-model' }>
     >(),
   phrases:
     jsonb('phrases').$type<
       Array<{ start: number; end: number; energy: number }>
     >(),
   dropMoments: jsonb('drop_moments').$type<number[]>(),
-  cuePoints: jsonb('cue_points').$type<{
-    mixIn: number;
-    drop: number | null;
-    breakdown: number | null;
-    mixOut: number;
-    confidence: number;
-    detectedAt?: string;
-  }>(),
+  cuePoints: jsonb('cue_points').$type<
+    Array<{
+      position: number;
+      type: 'mix-in' | 'mix-out' | 'drop' | 'breakdown';
+      confidence: number;
+      provenance: 'browser-heuristic' | 'browser-ml' | 'backend-heuristic' | 'backend-model';
+    }>
+  >(),
   waveformLite: jsonb('waveform_lite').$type<number[]>(),
   analysisQuality: varchar('analysis_quality', { length: 32 }).default(
     'standard'

@@ -9,7 +9,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegStatic from 'ffmpeg-static';
 import { Readable } from 'node:stream';
 import { YIN } from 'pitchfinder';
-import type { BrowserAnalysisHint } from '@/lib/audio/types/analysis';
+import type { BrowserAnalysisHint, AnnotationProvenance } from '@/lib/audio/types/analysis';
 import { getAudioPipelineFeatureFlags } from '@/lib/audio/feature-flags';
 import { getBrowserHintThresholds } from '@/lib/audio/browser-hint-thresholds';
 
@@ -34,11 +34,13 @@ type AnalysisResult = {
   camelotKey: string | null;
   keyConfidence: number | null;
   durationSeconds: number | null;
+  downbeatGrid: number[];
   beatGrid: number[];
   hasStems: boolean;
   phrases: Array<{ start: number; end: number; energy: number }>;
-  structure: Array<{ label: string; start: number; end: number; confidence: number }>;
+  structure: Array<{ label: string; start: number; end: number; confidence: number; provenance: AnnotationProvenance }>;
   drops: number[];
+  cuePoints: Array<{ position: number; type: 'mix-in' | 'mix-out' | 'drop' | 'breakdown'; confidence: number; provenance: AnnotationProvenance }>;
   waveformLite: number[];
 };
 
@@ -204,6 +206,31 @@ function generateBeatGrid(bpm: number, durationSeconds: number) {
   return grid;
 }
 
+function generateDownbeatGrid(beatGrid: number[]) {
+  // Assuming a standard 4/4 signature for now
+  return beatGrid.filter((_, idx) => idx % 4 === 0);
+}
+
+function detectCuePoints(structure: Array<{ label: string; start: number; end: number; confidence: number; provenance: AnnotationProvenance }>) {
+  const cues: Array<{ position: number; type: 'mix-in' | 'mix-out' | 'drop' | 'breakdown'; confidence: number; provenance: AnnotationProvenance }> = [];
+  
+  if (structure.length > 0) {
+    cues.push({ position: structure[0].start, type: 'mix-in', confidence: 0.8, provenance: 'backend-heuristic' });
+  }
+  
+  const drops = structure.filter(s => s.label === 'drop');
+  drops.forEach(d => {
+    cues.push({ position: d.start, type: 'drop', confidence: d.confidence, provenance: 'backend-heuristic' });
+  });
+  
+  const lastSection = structure[structure.length - 1];
+  if (lastSection) {
+    cues.push({ position: lastSection.start, type: 'mix-out', confidence: 0.8, provenance: 'backend-heuristic' });
+  }
+  
+  return cues;
+}
+
 function detectPhrases(envelope: number[], hopSize: number, sampleRate: number) {
   const hopDuration = hopSize / sampleRate;
   if (envelope.length === 0) return [] as Array<{ start: number; end: number; energy: number }>;
@@ -256,33 +283,32 @@ function detectDrops(envelope: number[], hopSize: number, sampleRate: number) {
 }
 
 function buildStructure(phrases: Array<{ start: number; end: number; energy: number }>, drops: number[], durationSeconds: number | null) {
-  if (!durationSeconds) return [] as Array<{ label: string; start: number; end: number; confidence: number }>;
-  const structure: Array<{ label: string; start: number; end: number; confidence: number }> = [];
+  if (!durationSeconds) return [] as Array<{ label: string; start: number; end: number; confidence: number; provenance: AnnotationProvenance }>;
+  const structure: Array<{ label: string; start: number; end: number; confidence: number; provenance: AnnotationProvenance }> = [];
   const sortedPhrases = [...phrases].sort((a, b) => a.start - b.start);
-  const labelsCycle = ['verse', 'chorus'];
-  let labelIdx = 0;
 
   if (sortedPhrases.length === 0) {
-    structure.push({ label: 'intro', start: 0, end: Number(Math.min(durationSeconds, 15).toFixed(2)), confidence: 0.4 });
-    structure.push({ label: 'body', start: Number(Math.min(durationSeconds, 15).toFixed(2)), end: Number(durationSeconds.toFixed(2)), confidence: 0.4 });
+    structure.push({ label: 'intro', start: 0, end: Number(Math.min(durationSeconds, 15).toFixed(2)), confidence: 0.4, provenance: 'backend-heuristic' });
+    structure.push({ label: 'body', start: Number(Math.min(durationSeconds, 15).toFixed(2)), end: Number(durationSeconds.toFixed(2)), confidence: 0.4, provenance: 'backend-heuristic' });
     return structure;
   }
 
   sortedPhrases.forEach((phrase, idx) => {
-    const label = idx === 0 ? 'intro' : labelsCycle[labelIdx % labelsCycle.length];
-    labelIdx += 1;
-    structure.push({ label, start: phrase.start, end: phrase.end, confidence: Math.min(1, phrase.energy * 2) });
+    let label = 'body';
+    if (idx === 0) label = 'intro';
+    else if (phrase.energy > 1.2) label = 'build';
+    structure.push({ label, start: phrase.start, end: phrase.end, confidence: Math.min(1, phrase.energy * 2), provenance: 'backend-heuristic' });
   });
 
   const dropStart = drops[0];
   if (typeof dropStart === 'number') {
     const dropEnd = Math.min(durationSeconds, dropStart + 6);
-    structure.push({ label: 'drop', start: Number(Math.max(0, dropStart - 1).toFixed(2)), end: Number(dropEnd.toFixed(2)), confidence: 0.8 });
+    structure.push({ label: 'drop', start: Number(Math.max(0, dropStart - 1).toFixed(2)), end: Number(dropEnd.toFixed(2)), confidence: 0.8, provenance: 'backend-heuristic' });
   }
 
   const lastEnd = Math.max(...structure.map(s => s.end), 0);
   if (durationSeconds - lastEnd > 4) {
-    structure.push({ label: 'outro', start: Number(lastEnd.toFixed(2)), end: Number(durationSeconds.toFixed(2)), confidence: 0.5 });
+    structure.push({ label: 'outro', start: Number(lastEnd.toFixed(2)), end: Number(durationSeconds.toFixed(2)), confidence: 0.5, provenance: 'backend-heuristic' });
   }
 
   return structure
@@ -353,9 +379,11 @@ async function analyze(buffer: Buffer, mimeType: string, fileName: string): Prom
   const { bpm, confidence: bpmConfidence } = estimateBpm(envelope, sampleRate, hopSize);
   const { key, camelot, confidence: keyConfidence } = estimateKey(samples, sampleRate);
   const beatGrid = bpm && durationSeconds ? generateBeatGrid(bpm, durationSeconds) : [];
+  const downbeatGrid = generateDownbeatGrid(beatGrid);
   const phrases = detectPhrases(envelope, hopSize, sampleRate);
   const drops = detectDrops(envelope, hopSize, sampleRate);
   const structure = buildStructure(phrases, drops, durationSeconds);
+  const cuePoints = detectCuePoints(structure);
 
   log('info', 'audio.analysis.complete', {
     fileName,
@@ -374,11 +402,13 @@ async function analyze(buffer: Buffer, mimeType: string, fileName: string): Prom
     camelotKey: camelot,
     keyConfidence: keyConfidence ? Number(keyConfidence.toFixed(3)) : null,
     durationSeconds: durationSeconds ? Number(durationSeconds.toFixed(2)) : null,
+    downbeatGrid,
     beatGrid,
     hasStems: false,
     phrases,
     structure,
     drops,
+    cuePoints,
     waveformLite,
   };
 }
@@ -475,10 +505,12 @@ function buildDbUpdateFromBrowserHint(hint: BrowserAnalysisHint) {
     analysisFeatures: hint.analysisFeatures ?? null,
     durationSeconds: hint.durationSeconds != null ? hint.durationSeconds.toString() : null,
     hasStems: false,
+    downbeatGrid: hint.downbeatGrid ?? [],
     beatGrid: hint.beatGrid ?? [],
     phrases: hint.phrases ?? [],
     structure: hint.structure ?? [],
     dropMoments: hint.dropMoments ?? [],
+    cuePoints: hint.cuePoints ?? [],
     waveformLite: hint.waveformLite ?? [],
     analysisQuality: 'browser_hint',
     analysisVersion: 'browser-v1',
@@ -576,10 +608,12 @@ export async function startTrackAnalysis({
         analysisFeatures: validBrowserHint?.analysisFeatures ?? null,
         durationSeconds: result.durationSeconds !== null ? result.durationSeconds.toString() : null,
         hasStems: result.hasStems,
+        downbeatGrid: result.downbeatGrid,
         beatGrid: result.beatGrid,
         phrases: result.phrases,
         structure: result.structure,
         dropMoments: result.drops,
+        cuePoints: result.cuePoints,
         waveformLite: result.waveformLite,
         analysisQuality: 'structured',
         analysisVersion: ANALYSIS_VERSION,

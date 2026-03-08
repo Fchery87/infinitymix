@@ -22,7 +22,7 @@ type Handler<T extends AutomationJobKind> = (
 
 const DEFAULT_CONCURRENCY = 2;
 const DEFAULT_POLL_INTERVAL_MS = 1500;
-const DEFAULT_LEASE_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_LEASE_TIMEOUT_MS = 60 * 60 * 1000;
 
 function backoffDelayMs(attempts: number) {
   const schedule = [1000, 3000, 10000];

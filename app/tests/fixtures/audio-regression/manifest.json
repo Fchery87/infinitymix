@@ -62,6 +62,46 @@
       "tags": ["slow", "vocal-led", "ambient-sections"],
       "useCases": ["low-energy-sections", "section-tagging", "loudness-evaluation"],
       "difficulty": "medium"
+    },
+    {
+      "id": "techhouse_groove_126_bmin",
+      "filename": "techhouse_groove_126bpm_bmin.wav",
+      "genre": "techhouse",
+      "bpmExpected": 126,
+      "keyExpected": "Bmin",
+      "tags": ["minimal", "bass-heavy", "syncopated"],
+      "useCases": ["rhythmic-stability", "low-end-clash-avoidance", "transition-smoothness"],
+      "difficulty": "medium"
+    },
+    {
+      "id": "indie_pop_110_cmaj",
+      "filename": "indie_pop_110bpm_cmaj.mp3",
+      "genre": "indie_pop",
+      "bpmExpected": 110,
+      "keyExpected": "Cmaj",
+      "tags": ["weak-intro", "live-band", "vocal-heavy"],
+      "useCases": ["intro-detection", "tempo-robustness", "vocal-clash-avoidance"],
+      "difficulty": "high"
+    },
+    {
+      "id": "trap_beat_150_csharpmin",
+      "filename": "trap_beat_150bpm_csharpmin.wav",
+      "genre": "trap",
+      "bpmExpected": 150,
+      "keyExpected": "C#min",
+      "tags": ["half-time", "808-bass", "syncopated-hihats"],
+      "useCases": ["tempo-halving-robustness", "drop-detection", "energy-flow"],
+      "difficulty": "high"
+    },
+    {
+      "id": "disco_funk_120_emin",
+      "filename": "disco_funk_120bpm_emin.mp3",
+      "genre": "disco",
+      "bpmExpected": 120,
+      "keyExpected": "Emin",
+      "tags": ["live-drums", "brass", "complex-harmony"],
+      "useCases": ["harmonic-near-matches", "timbre-compatibility", "stem-quality-issues"],
+      "difficulty": "high"
     }
   ]
 }

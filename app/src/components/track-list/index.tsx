@@ -80,9 +80,10 @@ interface TrackListProps {
   onRemoveTrack?: (id: string) => void;
   onStemsUpdated?: () => void;
   className?: string;
+  isLoading?: boolean;
 }
 
-export function TrackList({ tracks, onRemoveTrack, onStemsUpdated, className }: TrackListProps) {
+export function TrackList({ tracks, onRemoveTrack, onStemsUpdated, className, isLoading }: TrackListProps) {
   const [separatingIds, setSeparatingIds] = useState<Set<string>>(new Set());
 
   const handleSeparateStems = async (trackId: string) => {
@@ -116,6 +117,28 @@ export function TrackList({ tracks, onRemoveTrack, onStemsUpdated, className }: 
       }, 2000);
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className={cn("mt-12 space-y-3", className)}>
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-2xl font-bold text-white">Track Pool</h3>
+          <span className="text-sm text-gray-500">Loading...</span>
+        </div>
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="p-4 bg-card/40 border border-white/5 rounded-xl">
+            <div className="flex items-center gap-4">
+              <div className="w-10 h-10 rounded-lg bg-white/10 animate-pulse" />
+              <div className="flex-1 space-y-2">
+                <div className="h-4 bg-white/10 rounded animate-pulse w-1/2" />
+                <div className="h-3 bg-white/10 rounded animate-pulse w-1/4" />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <AnimatePresence>
@@ -229,9 +252,10 @@ export function TrackList({ tracks, onRemoveTrack, onStemsUpdated, className }: 
                           variant="ghost" 
                           size="icon" 
                           onClick={() => onRemoveTrack(track.id)}
-                          className="text-gray-600 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                          className="text-gray-600 hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-destructive"
+                          aria-label={`Delete track ${track.original_filename}`}
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-4 h-4" aria-hidden="true" />
                       </Button>
                     )}
                   </div>

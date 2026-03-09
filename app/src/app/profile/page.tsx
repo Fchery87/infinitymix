@@ -11,7 +11,7 @@ export default function ProfilePage() {
         {/* Navbar */}
         <Navigation />
 
-        <main className="pt-32 pb-16 px-4 sm:px-6 lg:px-8 max-w-4xl mx-auto">
+        <main className="pt-32 pb-16 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto">
             {/* Profile Header */}
             <div className="flex flex-col md:flex-row items-center md:items-start gap-8 mb-12">
                 <div className="w-32 h-32 rounded-full bg-gradient-to-br from-gray-800 to-black border-4 border-white/10 flex items-center justify-center shadow-2xl">

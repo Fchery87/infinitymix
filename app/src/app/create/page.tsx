@@ -1111,16 +1111,17 @@ export default function CreatePage() {
             <Card className="bg-card/60 backdrop-blur-xl border-white/10">
               <CardContent className="pt-6 space-y-3">
                 <p className="text-sm text-gray-400">Mix Mode</p>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <button
                     onClick={() => setMixMode('standard')}
-                    className={`p-4 rounded-lg border transition-all ${
+                    className={`p-4 rounded-lg border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${
                       mixMode === 'standard'
                         ? 'border-primary bg-primary/10 text-white'
                         : 'border-white/10 hover:border-white/20 text-gray-400'
                     }`}
+                    aria-pressed={mixMode === 'standard'}
                   >
-                    <Music2 className="w-5 h-5 mx-auto mb-2" />
+                    <Music2 className="w-5 h-5 mx-auto mb-2" aria-hidden="true" />
                     <p className="text-sm font-medium">Standard Mix</p>
                     <p className="text-xs text-gray-500">Layer full tracks</p>
                   </button>
@@ -1131,15 +1132,16 @@ export default function CreatePage() {
                       }
                     }}
                     disabled={!stemMashupAvailable}
-                    className={`p-4 rounded-lg border transition-all ${
+                    className={`p-4 rounded-lg border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${
                       mixMode === 'stem_mashup'
                         ? 'border-primary bg-primary/10 text-white'
                         : stemMashupAvailable
                           ? 'border-white/10 hover:border-white/20 text-gray-400'
                           : 'border-white/5 text-gray-600 opacity-60 cursor-not-allowed'
                     }`}
+                    aria-pressed={mixMode === 'stem_mashup'}
                   >
-                    <Mic2 className="w-5 h-5 mx-auto mb-2" />
+                    <Mic2 className="w-5 h-5 mx-auto mb-2" aria-hidden="true" />
                     <p className="text-sm font-medium">Stem Mashup</p>
                     <p className="text-xs text-gray-500">
                       {stemMashupAvailable ? 'Vocals + Instrumental' : 'Temporarily unavailable'}
@@ -1147,13 +1149,14 @@ export default function CreatePage() {
                   </button>
                   <button
                     onClick={() => setMixMode('auto_dj')}
-                    className={`p-4 rounded-lg border transition-all ${
+                    className={`p-4 rounded-lg border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${
                       mixMode === 'auto_dj'
                         ? 'border-primary bg-primary/10 text-white'
                         : 'border-white/10 hover:border-white/20 text-gray-400'
                     }`}
+                    aria-pressed={mixMode === 'auto_dj'}
                   >
-                    <Zap className="w-5 h-5 mx-auto mb-2" />
+                    <Zap className="w-5 h-5 mx-auto mb-2" aria-hidden="true" />
                     <p className="text-sm font-medium">Auto DJ</p>
                     <p className="text-xs text-gray-500">Event-ready mix</p>
                   </button>
@@ -1183,8 +1186,9 @@ export default function CreatePage() {
                     <>
                       {/* Vocal Track Selection */}
                       <div>
-                        <label className="text-xs text-gray-400 mb-2 block">Take VOCALS from:</label>
+                        <label htmlFor="vocal-track-select" className="text-xs text-gray-400 mb-2 block">Take VOCALS from:</label>
                         <select
+                          id="vocal-track-select"
                           value={vocalTrackId || ''}
                           onChange={(e) => setVocalTrackId(e.target.value || null)}
                           className="w-full p-3 rounded-lg bg-black/30 border border-white/10 text-white text-sm focus:border-primary outline-none"
@@ -1215,8 +1219,9 @@ export default function CreatePage() {
 
                       {/* Instrumental Track Selection */}
                       <div>
-                        <label className="text-xs text-gray-400 mb-2 block">Take INSTRUMENTAL from:</label>
+                        <label htmlFor="instrumental-track-select" className="text-xs text-gray-400 mb-2 block">Take INSTRUMENTAL from:</label>
                         <select
+                          id="instrumental-track-select"
                           value={instrumentalTrackId || ''}
                           onChange={(e) => setInstrumentalTrackId(e.target.value || null)}
                           className="w-full p-3 rounded-lg bg-black/30 border border-white/10 text-white text-sm focus:border-primary outline-none"
@@ -1293,8 +1298,9 @@ export default function CreatePage() {
                           </div>
                         </label>
                         <div className="flex items-center gap-2 text-xs text-gray-400">
-                          <span className="whitespace-nowrap">Mode</span>
+                          <label htmlFor="beat-align-mode" className="whitespace-nowrap">Mode</label>
                           <select
+                            id="beat-align-mode"
                             value={beatAlignMode}
                             onChange={(e) => setBeatAlignMode(e.target.value as 'downbeat' | 'any')}
                             disabled={!beatAlign}

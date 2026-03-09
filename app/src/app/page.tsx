@@ -159,10 +159,10 @@ export default function LandingPage() {
       </section>
 
       {/* Features Section */}
-      <section id="features" className="py-24 relative bg-black/20">
+      <section id="features" aria-labelledby="features-heading" className="py-24 relative bg-black/20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-5xl font-bold mb-4">Beyond Simple Crossfading</h2>
+            <h2 id="features-heading" className="text-3xl md:text-5xl font-bold mb-4">Beyond Simple Crossfading</h2>
             <p className="text-gray-400 text-lg max-w-2xl mx-auto">
               Our AI engine deconstructs music to its core elements to create structurally perfect mashups.
             </p>
@@ -195,11 +195,11 @@ export default function LandingPage() {
       </section>
 
       {/* How It Works Section */}
-      <section id="how-it-works" className="py-24 relative">
+      <section id="how-it-works" aria-labelledby="how-it-works-heading" className="py-24 relative">
         <div className="absolute inset-0 bg-gradient-to-b from-transparent via-primary/5 to-transparent pointer-events-none" />
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
           <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-5xl font-bold mb-4">From Upload to Viral Hit</h2>
+            <h2 id="how-it-works-heading" className="text-3xl md:text-5xl font-bold mb-4">From Upload to Viral Hit</h2>
             <p className="text-gray-400 text-lg max-w-2xl mx-auto">
               Three simple steps to create your next masterpiece.
             </p>
@@ -229,10 +229,10 @@ export default function LandingPage() {
       </section>
 
       {/* Pricing Section */}
-      <section id="pricing" className="py-24 relative bg-black/20">
+      <section id="pricing" aria-labelledby="pricing-heading" className="py-24 relative bg-black/20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-5xl font-bold mb-4">Simple, Transparent Pricing</h2>
+            <h2 id="pricing-heading" className="text-3xl md:text-5xl font-bold mb-4">Simple, Transparent Pricing</h2>
             <p className="text-gray-400 text-lg max-w-2xl mx-auto">
               Start for free, upgrade when you&apos;re ready to go pro.
             </p>

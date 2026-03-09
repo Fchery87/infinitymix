@@ -21,7 +21,7 @@
     --secondary-foreground: 0 0% 98%;
 
     --muted: 240 4% 16%;
-    --muted-foreground: 240 5% 65%;
+    --muted-foreground: 240 5% 75%; /* Improved contrast from 65% */
 
     --accent: 240 4% 16%;
     --accent-foreground: 0 0% 98%;
@@ -47,6 +47,16 @@
                       radial-gradient(circle at 0% 0%, rgba(255, 255, 255, 0.03), transparent 20%),
                       radial-gradient(circle at 100% 0%, rgba(255, 255, 255, 0.03), transparent 20%);
     background-attachment: fixed;
+  }
+  
+  /* Focus visible styles */
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary ring-offset-2 ring-offset-background;
+  }
+  
+  /* Remove default focus styles for mouse users */
+  :focus:not(:focus-visible) {
+    @apply outline-none ring-0;
   }
 }
 
@@ -86,4 +96,66 @@
 
 .glow-box {
   box-shadow: 0 0 20px rgba(249, 115, 22, 0.2);
+}
+
+/* Design Tokens - CSS Custom Properties */
+@layer base {
+  :root {
+    /* Spacing Scale */
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-5: 1.25rem;
+    --space-6: 1.5rem;
+    --space-8: 2rem;
+    --space-10: 2.5rem;
+    --space-12: 3rem;
+    --space-16: 4rem;
+    --space-20: 5rem;
+    --space-24: 6rem;
+    
+    /* Animation */
+    --duration-fast: 150ms;
+    --duration-normal: 250ms;
+    --duration-slow: 350ms;
+    
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    --shadow-glow: 0 0 20px hsl(24 95% 53% / 0.5);
+    --shadow-glow-lg: 0 0 40px hsl(24 95% 53% / 0.6);
+  }
+}
+
+@layer utilities {
+  /* Focus visible utilities */
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+  }
+  
+  /* Animation utilities */
+  .animate-fade-in {
+    animation: fade-in var(--duration-normal) ease-out;
+  }
+  
+  .animate-slide-up {
+    animation: slide-up var(--duration-slow) ease-out;
+  }
+  
+  /* Glassmorphism utilities */
+  .glass-strong {
+    @apply bg-black/40 backdrop-blur-xl border-white/10;
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
 }

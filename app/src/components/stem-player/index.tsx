@@ -114,8 +114,9 @@ function StemTrack({ stem, isPlaying, onTogglePlay, onDownload }: {
         size="icon"
         className="h-8 w-8 rounded-full"
         onClick={onTogglePlay}
+        aria-label={isPlaying ? "Pause stem" : "Play stem"}
       >
-        {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+        {isPlaying ? <Pause className="w-4 h-4" aria-hidden="true" /> : <Play className="w-4 h-4" aria-hidden="true" />}
       </Button>
 
       <Icon className="w-4 h-4" />
@@ -136,8 +137,9 @@ function StemTrack({ stem, isPlaying, onTogglePlay, onDownload }: {
           size="icon"
           className="h-7 w-7"
           onClick={toggleMute}
+          aria-label={isMuted ? "Unmute stem" : "Mute stem"}
         >
-          {isMuted ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
+          {isMuted ? <VolumeX className="w-3 h-3" aria-hidden="true" /> : <Volume2 className="w-3 h-3" aria-hidden="true" />}
         </Button>
         <input
           type="range"
@@ -156,8 +158,9 @@ function StemTrack({ stem, isPlaying, onTogglePlay, onDownload }: {
         size="icon"
         className="h-7 w-7"
         onClick={onDownload}
+        aria-label="Download stem"
       >
-        <Download className="w-3 h-3" />
+        <Download className="w-3 h-3" aria-hidden="true" />
       </Button>
 
       {/* Engine badge */}

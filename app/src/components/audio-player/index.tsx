@@ -115,23 +115,23 @@ export function AudioPlayer({ trackName, duration, isPlaying, src, onClose, onTo
           {/* Background Glow */}
           <div className="absolute top-0 left-1/2 -translate-x-1/2 w-1/2 h-full bg-primary/5 blur-3xl pointer-events-none" />
 
-          <div className="flex items-center gap-6 relative z-10">
+          <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6 relative z-10">
             
             {/* Track Info */}
-            <div className="flex items-center gap-4 w-1/4 min-w-[200px]">
-              <div className="w-14 h-14 rounded-lg bg-gradient-to-br from-gray-800 to-black border border-white/10 flex items-center justify-center relative overflow-hidden">
+            <div className="flex items-center gap-4 w-full sm:w-1/4 sm:min-w-[200px]">
+              <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-lg bg-gradient-to-br from-gray-800 to-black border border-white/10 flex items-center justify-center relative overflow-hidden flex-shrink-0">
                 <motion.div 
                   animate={{ rotate: isPlaying ? 360 : 0 }}
                   transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
                   className="absolute inset-0 bg-[conic-gradient(from_0deg,transparent_0_340deg,white_360deg)] opacity-20"
                 />
-                <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
-                   <div className="w-3 h-3 bg-primary rounded-full animate-pulse" />
+                <div className="w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-primary/20 flex items-center justify-center">
+                   <div className="w-2 h-2 sm:w-3 sm:h-3 bg-primary rounded-full animate-pulse" />
                 </div>
               </div>
-              <div className="overflow-hidden">
+              <div className="overflow-hidden min-w-0">
                 <h4 className="font-bold text-white truncate">{trackName}</h4>
-                <p className="text-xs text-gray-400">InfinityMix AI Generated</p>
+                <p className="text-xs text-gray-400 hidden sm:block">InfinityMix AI Generated</p>
               </div>
             </div>
 
@@ -151,11 +151,12 @@ export function AudioPlayer({ trackName, duration, isPlaying, src, onClose, onTo
                   onClick={onTogglePlay}
                   className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform active:scale-95"
                   disabled={!hasSource}
+                  aria-label={isPlaying ? "Pause" : "Play"}
                 >
                   {isPlaying ? (
-                    <Pause className="w-5 h-5 fill-current" />
+                    <Pause className="w-5 h-5 fill-current" aria-hidden="true" />
                   ) : (
-                    <Play className="w-5 h-5 fill-current ml-0.5" />
+                    <Play className="w-5 h-5 fill-current ml-0.5" aria-hidden="true" />
                   )}
                 </button>
                 <button
@@ -188,8 +189,8 @@ export function AudioPlayer({ trackName, duration, isPlaying, src, onClose, onTo
             </div>
 
             {/* Volume & Actions */}
-            <div className="flex items-center gap-4 w-1/4 justify-end">
-               <div className="flex items-center gap-2 group/vol">
+            <div className="flex items-center gap-2 sm:gap-4 w-auto sm:w-1/4 justify-end">
+               <div className="hidden sm:flex items-center gap-2 group/vol">
                  <Volume2 className="w-5 h-5 text-gray-400" />
                  <div 
                    className="w-20 h-1 bg-white/10 rounded-full relative cursor-pointer"
@@ -202,31 +203,32 @@ export function AudioPlayer({ trackName, duration, isPlaying, src, onClose, onTo
                    <div className="absolute top-0 left-0 h-full bg-white/50 rounded-full" style={{ width: `${volume}%` }} />
                  </div>
                </div>
-               <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors">
-                 <X className="w-5 h-5 text-gray-400" />
-               </button>
+                <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors" aria-label="Close player">
+                  <X className="w-5 h-5 text-gray-400" aria-hidden="true" />
+                </button>
             </div>
 
           </div>
           
-          {/* Visualizer Mock */}
-          <div className="absolute bottom-0 left-0 right-0 h-1/3 flex items-end justify-between gap-1 px-4 opacity-10 pointer-events-none">
-             {[...Array(60)].map((_, i) => (
-               <motion.div
-                 key={i}
-                 className="w-full bg-primary rounded-t-sm"
-                 animate={{ 
-                   height: isPlaying ? [`${Math.random() * 100}%`, `${Math.random() * 50}%`] : "10%" 
-                 }}
-                 transition={{
-                   duration: 0.2,
-                   repeat: Infinity,
-                   repeatType: "reverse",
-                   delay: i * 0.01
-                 }}
-               />
-             ))}
-          </div>
+           {/* Visualizer Mock */}
+           <div className="absolute bottom-0 left-0 right-0 h-1/3 flex items-end justify-between gap-1 px-4 opacity-10 pointer-events-none">
+              {[...Array(30)].map((_, i) => (
+                <motion.div
+                  key={i}
+                  className="w-full bg-primary rounded-t-sm"
+                  animate={{ 
+                    height: isPlaying ? [`${Math.random() * 100}%`, `${Math.random() * 50}%`] : "10%" 
+                  }}
+                  transition={{
+                    duration: 0.5,
+                    repeat: Infinity,
+                    repeatType: "reverse",
+                    delay: i * 0.02
+                  }}
+                  style={{ willChange: 'height' }}
+                />
+              ))}
+           </div>
         </div>
       </div>
       <audio ref={audioRef} src={src || undefined} preload="metadata" className="hidden" />

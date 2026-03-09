@@ -386,7 +386,7 @@ export default function MashupsPage() {
       <Navigation />
 
       {/* Main Content */}
-      <main className="pt-32 pb-16 px-4 sm:px-6 lg:px-8 max-w-4xl mx-auto">
+      <main className="pt-32 pb-16 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -567,7 +567,7 @@ export default function MashupsPage() {
                           </div>
                         </div>
 
-                        <div className="flex items-center space-x-2">
+                        <div className="flex items-center flex-wrap gap-2">
                           {mashup.status === 'completed' ? (
                             <>
                               <Button 
@@ -682,8 +682,9 @@ export default function MashupsPage() {
                             onClick={() => handleDelete(mashup.id)}
                             disabled={mashup.status === 'generating' || deletingId === mashup.id}
                             className="text-gray-600 hover:text-destructive hover:bg-destructive/10"
+                            aria-label={`Delete mashup ${mashup.name}`}
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Trash2 className="w-4 h-4" aria-hidden="true" />
                           </Button>
                         </div>
                       </div>

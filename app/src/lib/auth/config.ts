@@ -26,6 +26,9 @@ export const authConfig = {
     requireEmailVerification: false,
     minPasswordLength: 8,
     maxPasswordLength: 64,
+    sendResetPassword: async ({ user, url }: { user: { email: string; name?: string }; url: string; token: string }) => {
+      console.log(`Password reset for ${user.email}: ${url}`);
+    },
   },
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days
@@ -45,7 +48,20 @@ export const authConfig = {
       enabled: false,
     },
   },
-  socialProviders: {},
+  socialProviders: {
+    github: process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET
+      ? {
+          clientId: process.env.GITHUB_CLIENT_ID,
+          clientSecret: process.env.GITHUB_CLIENT_SECRET,
+        }
+      : undefined,
+    google: process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+      ? {
+          clientId: process.env.GOOGLE_CLIENT_ID,
+          clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+        }
+      : undefined,
+  },
   // Security enhancements
   security: {
     domain: process.env.BETTER_AUTH_URL || 'http://localhost:3000',

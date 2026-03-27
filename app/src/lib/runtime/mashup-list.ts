@@ -1,4 +1,4 @@
-import { count, desc, eq } from 'drizzle-orm';
+import { count, desc, eq, like, and, lt, or, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { mashups } from '@/lib/db/schema';
 import { getLatestAutomationJobsForResources } from '@/lib/runtime/jobs';
@@ -6,6 +6,7 @@ import { getLatestAutomationJobsForResources } from '@/lib/runtime/jobs';
 export type MashupListItem = {
   id: string;
   user_id: string;
+  name: string;
   duration_seconds: number;
   status: 'pending' | 'generating' | 'completed' | 'failed';
   output_path: string | null;
@@ -29,23 +30,46 @@ export type MashupListItem = {
 };
 
 export type MashupListResponse = {
-  page: number;
-  limit: number;
-  total: number;
   data: MashupListItem[];
+  nextCursor: string | null;
+  total: number;
 };
 
-export async function getMashupListForUser(args: {
+export type MashupListParams = {
   userId: string;
-  page: number;
-  limit: number;
-}): Promise<MashupListResponse> {
-  const offset = (args.page - 1) * args.limit;
+  cursor?: string;
+  limit?: number;
+  search?: string;
+  status?: 'all' | 'completed' | 'in-progress';
+};
+
+export async function getMashupListForUser(
+  args: MashupListParams
+): Promise<MashupListResponse> {
+  const limit = Math.min(50, Math.max(1, args.limit ?? 25));
+  const search = args.search?.trim();
+  const status = args.status;
+
+  const conditions: ReturnType<typeof eq>[] = [eq(mashups.userId, args.userId)];
+
+  if (search) {
+    conditions.push(like(mashups.name, `%${search}%`));
+  }
+
+  let whereClause;
+
+  if (status === 'completed') {
+    whereClause = and(...conditions, eq(mashups.generationStatus, 'completed' as const)) ?? undefined;
+  } else if (status === 'in-progress') {
+    whereClause = and(...conditions, or(eq(mashups.generationStatus, 'pending' as const), eq(mashups.generationStatus, 'generating' as const))) ?? undefined;
+  } else {
+    whereClause = and(...conditions) ?? undefined;
+  }
 
   const [totalCount] = await db
     .select({ count: count() })
     .from(mashups)
-    .where(eq(mashups.userId, args.userId));
+    .where(whereClause ?? undefined);
 
   const userMashups = await db
     .select({
@@ -68,21 +92,25 @@ export async function getMashupListForUser(args: {
       updatedAt: mashups.updatedAt,
     })
     .from(mashups)
-    .where(eq(mashups.userId, args.userId))
-    .orderBy(desc(mashups.createdAt))
-    .limit(args.limit)
-    .offset(offset);
+    .where(
+      args.cursor && whereClause
+        ? and(whereClause, lt(mashups.id, args.cursor as string))
+        : whereClause
+    )
+    .orderBy(desc(mashups.id))
+    .limit(limit + 1);
+
+  const hasMore = userMashups.length > limit;
+  const data = hasMore ? userMashups.slice(0, -1) : userMashups;
+  const nextCursor = hasMore ? data[data.length - 1]?.id : null;
 
   const latestJobs = await getLatestAutomationJobsForResources(
     'mashup',
-    userMashups.map((mashup) => mashup.id)
+    data.map((mashup) => mashup.id)
   );
 
   return {
-    page: args.page,
-    limit: args.limit,
-    total: totalCount.count,
-    data: userMashups.map((mashup) => ({
+    data: data.map((mashup) => ({
       id: mashup.id,
       user_id: mashup.userId,
       name: mashup.name,
@@ -113,5 +141,7 @@ export async function getMashupListForUser(args: {
       created_at: mashup.createdAt,
       updated_at: mashup.updatedAt,
     })),
+    nextCursor,
+    total: totalCount.count,
   };
 }

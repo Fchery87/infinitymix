@@ -7,6 +7,10 @@ import { Sparkles } from 'lucide-react';
 
 interface ProjectGridProps {
   projects: Project[];
+  isSelectMode?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
+  onTogglePin?: (id: string, isPinned: boolean) => void;
 }
 
 const containerVariants = {
@@ -30,7 +34,13 @@ const itemVariants = {
   },
 };
 
-export function ProjectGrid({ projects }: ProjectGridProps) {
+export function ProjectGrid({
+  projects,
+  isSelectMode,
+  selectedIds,
+  onToggleSelect,
+  onTogglePin,
+}: ProjectGridProps) {
   if (projects.length === 0) {
     return (
       <motion.div
@@ -47,10 +57,11 @@ export function ProjectGrid({ projects }: ProjectGridProps) {
           <Sparkles className="h-12 w-12 text-primary" />
         </motion.div>
         <h3 className="mb-3 text-2xl font-bold text-white">
-          Create your first project
+          No projects found
         </h3>
         <p className="mb-8 max-w-md text-base text-gray-400 leading-relaxed">
-          Projects help you organize your tracks, stems, and mashups in one creative space. Start your first project to begin crafting.
+          Projects help you organize your tracks, stems, and mashups in one
+          creative space. Start your first project to begin crafting.
         </p>
         <div className="flex flex-col items-center gap-3 text-sm text-gray-500">
           <div className="flex items-center gap-2">
@@ -77,13 +88,15 @@ export function ProjectGrid({ projects }: ProjectGridProps) {
       initial="hidden"
       animate="show"
     >
-      {projects.map((project, index) => (
-        <motion.div
-          key={project.id}
-          variants={itemVariants}
-          layout
-        >
-          <ProjectCard project={project} />
+      {projects.map((project) => (
+        <motion.div key={project.id} variants={itemVariants} layout>
+          <ProjectCard
+            project={project}
+            isSelectMode={isSelectMode}
+            isSelected={selectedIds?.has(project.id)}
+            onToggleSelect={onToggleSelect}
+            onTogglePin={onTogglePin}
+          />
         </motion.div>
       ))}
     </motion.div>

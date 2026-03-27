@@ -3,13 +3,21 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Music, Play, Download, Trash2, AlertCircle, FileAudio, Sparkles } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Music, Play, Download, Trash2, AlertCircle, FileAudio, Sparkles, Search, ListMusic } from 'lucide-react';
 import { formatDuration, getStatusText } from '@/lib/utils/helpers';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AudioPlayer } from '@/components/audio-player';
 import { SatisfactionSurvey } from '@/components/satisfaction-survey';
+import { MiniWaveform } from '@/components/ui/mini-waveform';
+import { ShareButtons } from '@/components/share-buttons';
+import { BatchOperations, MashupCheckbox } from '@/components/batch-operations';
+import { PlaylistModal } from '@/components/playlist-modal';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import Link from 'next/link';
 import { Navigation } from '@/components/navigation';
+import { useDebouncedCallback } from 'use-debounce';
+import { trackEvents } from '@/lib/analytics/client';
 
 type Mashup = {
   id: string;
@@ -32,13 +40,12 @@ type Mashup = {
     status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
     last_error?: string | null;
   } | null;
-  };
+};
 
 type MashupListResponse = {
-  page: number;
-  limit: number;
-  total: number;
   data: Mashup[];
+  nextCursor: string | null;
+  total: number;
 };
 
 const MASHUP_REFRESH_FALLBACK_MS = 4000;
@@ -57,6 +64,7 @@ type TrendingMashup = {
 export default function MashupsPage() {
   const [mashups, setMashups] = useState<Mashup[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [playingMashupId, setPlayingMashupId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
@@ -68,17 +76,56 @@ export default function MashupsPage() {
   const [forkingId, setForkingId] = useState<string | null>(null);
   const [trending, setTrending] = useState<TrendingMashup[]>([]);
   const [copyingId, setCopyingId] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'in-progress'>('all');
+  const [hasMore, setHasMore] = useState(true);
 
-  const applyMashupListPayload = useCallback((payload: MashupListResponse) => {
-    setMashups(payload.data || []);
+  // Batch operations state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
+  const [batchDownloading, setBatchDownloading] = useState(false);
+  const [batchUpdatingVisibility, setBatchUpdatingVisibility] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    open: boolean;
+    title: string;
+    description: string;
+    onConfirm: () => void;
+  }>({ open: false, title: '', description: '', onConfirm: () => { } });
+
+  // Playlist state
+  const [playlistModalMashupId, setPlaylistModalMashupId] = useState<string | null>(null);
+  const [audioProgress, setAudioProgress] = useState<Record<string, number>>({});
+
+  const applyMashupListPayload = useCallback((payload: MashupListResponse, append = false) => {
+    if (append) {
+      setMashups(prev => [...prev, ...(payload.data || [])]);
+    } else {
+      setMashups(payload.data || []);
+    }
+    setNextCursor(payload.nextCursor);
+    setHasMore(!!payload.nextCursor);
   }, []);
 
-  const fetchMashups = useCallback(async (skipLoader = false) => {
+  const fetchMashups = useCallback(async (options?: { append?: boolean; skipLoader?: boolean }) => {
+    const { append = false, skipLoader = false } = options ?? {};
     try {
-      if (!skipLoader) setLoading(true);
+      if (!skipLoader && !append) {
+        setLoading(true);
+      } else if (append) {
+        setLoadingMore(true);
+      }
       setErrorMessage(null);
-      const response = await fetch('/api/mashups?limit=25', { cache: 'no-store' });
+
+      const params = new URLSearchParams();
+      params.set('limit', '25');
+      if (append && nextCursor) params.set('cursor', nextCursor);
+      if (searchQuery) params.set('search', searchQuery);
+      if (statusFilter !== 'all') params.set('status', statusFilter);
+
+      const response = await fetch(`/api/mashups?${params.toString()}`, { cache: 'no-store' });
       const payload = await response.json().catch(() => ({}));
 
       if (!response.ok) {
@@ -86,18 +133,21 @@ export default function MashupsPage() {
       }
 
       applyMashupListPayload({
-        page: payload.page ?? 1,
-        limit: payload.limit ?? 25,
+        data: (payload.data || []) as Mashup[],
+        nextCursor: payload.nextCursor,
         total: payload.total ?? 0,
-        data: (payload.data || payload.mashups || []) as Mashup[],
-      });
+      }, append);
     } catch (error) {
       console.error(error);
       setErrorMessage(error instanceof Error ? error.message : 'Failed to load mashups');
     } finally {
-      if (!skipLoader) setLoading(false);
+      if (!skipLoader && !append) {
+        setLoading(false);
+      } else if (append) {
+        setLoadingMore(false);
+      }
     }
-  }, [applyMashupListPayload]);
+  }, [applyMashupListPayload, searchQuery, statusFilter, nextCursor]);
 
   const fetchTrending = useCallback(async () => {
     try {
@@ -115,6 +165,15 @@ export default function MashupsPage() {
     void fetchMashups();
     void fetchTrending();
   }, [fetchMashups, fetchTrending]);
+
+  const debouncedSearch = useDebouncedCallback(() => {
+    setNextCursor(null);
+    void fetchMashups();
+  }, 500);
+
+  useEffect(() => {
+    debouncedSearch();
+  }, [searchQuery, statusFilter]);
 
   useEffect(() => {
     let stream: EventSource | null = null;
@@ -140,9 +199,9 @@ export default function MashupsPage() {
     const startPollingFallback = () => {
       if (fallbackStarted || cancelled) return;
       fallbackStarted = true;
-      void fetchMashups(true);
+      void fetchMashups({ skipLoader: true });
       pollInterval = setInterval(() => {
-        void fetchMashups(true);
+        void fetchMashups({ skipLoader: true });
       }, MASHUP_REFRESH_FALLBACK_MS);
     };
 
@@ -209,6 +268,109 @@ export default function MashupsPage() {
     return `/api/mashups/${currentMashup.id}/download?stream=true`;
   }, [currentMashup]);
 
+  const completedMashups = useMemo(
+    () => mashups.filter((m) => m.status === 'completed'),
+    [mashups]
+  );
+
+  // --- Batch operations ---
+  const handleSelectAll = () => {
+    setSelectedIds(new Set(completedMashups.map((m) => m.id)));
+  };
+
+  const handleDeselectAll = () => {
+    setSelectedIds(new Set());
+  };
+
+  const handleToggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleBatchDelete = () => {
+    const count = selectedIds.size;
+    setConfirmDialog({
+      open: true,
+      title: `Delete ${count} mashup${count > 1 ? 's' : ''}?`,
+      description: 'This action cannot be undone. All selected mashups and their files will be permanently deleted.',
+      onConfirm: async () => {
+        setConfirmDialog((prev) => ({ ...prev, open: false }));
+        setBatchDeleting(true);
+        try {
+          const res = await fetch('/api/mashups/batch', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: Array.from(selectedIds) }),
+          });
+          if (!res.ok) throw new Error('Batch delete failed');
+          setMashups((prev) => prev.filter((m) => !selectedIds.has(m.id)));
+          setSelectedIds(new Set());
+        } catch (error) {
+          console.error(error);
+          alert('Failed to delete selected mashups');
+        } finally {
+          setBatchDeleting(false);
+        }
+      },
+    });
+  };
+
+  const handleBatchDownload = async () => {
+    setBatchDownloading(true);
+    try {
+      for (const id of selectedIds) {
+        const mashup = mashups.find((m) => m.id === id);
+        if (!mashup || mashup.status !== 'completed') continue;
+        const response = await fetch(`/api/mashups/${id}/download?variant=playback`);
+        if (!response.ok) continue;
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${mashup.name}.${mashup.playback_format || 'mp3'}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+        await new Promise((r) => setTimeout(r, 300));
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setBatchDownloading(false);
+    }
+  };
+
+  const handleBatchVisibility = async (isPublic: boolean) => {
+    setBatchUpdatingVisibility(true);
+    try {
+      const res = await fetch('/api/mashups/batch', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedIds), isPublic }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error('Batch visibility update failed');
+      setMashups((prev) =>
+        prev.map((m) => {
+          const update = payload.updated?.find((u: { id: string; is_public: boolean; public_slug: string | null }) => u.id === m.id);
+          if (update) return { ...m, is_public: update.is_public, public_slug: update.public_slug };
+          return m;
+        })
+      );
+    } catch (error) {
+      console.error(error);
+      alert('Failed to update visibility');
+    } finally {
+      setBatchUpdatingVisibility(false);
+    }
+  };
+
+  // --- Single mashup actions ---
   const handlePlay = async (mashupId: string) => {
     const mashup = mashups.find((m) => m.id === mashupId);
     if (!mashup || mashup.status !== 'completed' || !mashup.output_path) {
@@ -221,11 +383,12 @@ export default function MashupsPage() {
     } else {
       setPlayingMashupId(mashupId);
       setIsPlaying(true);
+      setAudioProgress((prev) => ({ ...prev, [mashupId]: 0 }));
     }
 
     try {
       await fetch(`/api/mashups/${mashupId}/play`, { method: 'POST' });
-      void fetchMashups(true);
+      void fetchMashups({ skipLoader: true });
     } catch (error) {
       console.error(error);
     }
@@ -266,7 +429,7 @@ export default function MashupsPage() {
       link.remove();
       window.URL.revokeObjectURL(url);
 
-      void fetchMashups(true);
+      void fetchMashups({ skipLoader: true });
     } catch (error) {
       console.error(error);
       alert(error instanceof Error ? error.message : 'Failed to download mashup');
@@ -304,13 +467,33 @@ export default function MashupsPage() {
       const res = await fetch(`/api/mashups/${mashupId}/fork`, { method: 'POST' });
       const payload = await res.json().catch(() => null);
       if (!res.ok) throw new Error(payload?.error || 'Failed to fork mashup');
-      await fetchMashups(true);
+      await fetchMashups({ skipLoader: true });
       alert('Remix created! Check your mashup list.');
     } catch (error) {
       console.error(error);
       alert(error instanceof Error ? error.message : 'Failed to fork mashup');
     } finally {
       setForkingId(null);
+    }
+  };
+
+  const handleRetry = async (mashupId: string) => {
+    try {
+      setRetryingId(mashupId);
+      const res = await fetch(`/api/mashups/${mashupId}/retry`, { method: 'POST' });
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(payload?.error || 'Failed to retry mashup');
+
+      // Track retry event
+      trackEvents.mashupRetried('user', mashupId).catch(() => { });
+
+      await fetchMashups({ skipLoader: true });
+      alert('Mashup retry initiated! It will be processed shortly.');
+    } catch (error) {
+      console.error(error);
+      alert(error instanceof Error ? error.message : 'Failed to retry mashup');
+    } finally {
+      setRetryingId(null);
     }
   };
 
@@ -341,6 +524,11 @@ export default function MashupsPage() {
         throw new Error(data?.error || 'Failed to delete mashup');
       }
       setMashups((prev) => prev.filter((m) => m.id !== mashupId));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(mashupId);
+        return next;
+      });
       if (playingMashupId === mashupId) {
         setPlayingMashupId(null);
         setIsPlaying(false);
@@ -359,17 +547,13 @@ export default function MashupsPage() {
       setFeedbackSubmitting(true);
       const response = await fetch(`/api/mashups/${surveyMashupId}/feedback`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ rating, comments: feedback }),
       });
-
       if (!response.ok) {
         const data = await response.json().catch(() => null);
         throw new Error(data?.error || 'Failed to submit feedback');
       }
-
       setSubmittedFeedback((prev) => ({ ...prev, [surveyMashupId]: true }));
       setSurveyMashupId(null);
     } catch (error) {
@@ -382,10 +566,8 @@ export default function MashupsPage() {
 
   return (
     <div className="min-h-screen font-sans text-foreground relative pb-32">
-      {/* Navbar */}
       <Navigation />
 
-      {/* Main Content */}
       <main className="pt-32 pb-16 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -398,6 +580,7 @@ export default function MashupsPage() {
           </p>
         </motion.div>
 
+        {/* Stats Grid */}
         <div className="grid md:grid-cols-3 gap-4 mb-8">
           <Card className="bg-card/50 border-white/5">
             <CardContent className="p-5">
@@ -425,12 +608,13 @@ export default function MashupsPage() {
                 <span className="text-gray-400 text-sm">Engagement</span>
                 <Music className="w-4 h-4 text-primary" />
               </div>
-              <div className="text-lg font-semibold text-white">{stats.plays} plays • {stats.downloads} downloads</div>
-              <p className="text-xs text-gray-500 mt-1">Avg length {stats.completed ? formatDuration(Math.max(1, Math.floor(stats.totalDuration / stats.completed))) : '—'}</p>
+              <div className="text-lg font-semibold text-white">{stats.plays} plays &middot; {stats.downloads} downloads</div>
+              <p className="text-xs text-gray-500 mt-1">Avg length {stats.completed ? formatDuration(Math.max(1, Math.floor(stats.totalDuration / stats.completed))) : '\u2014'}</p>
             </CardContent>
           </Card>
         </div>
 
+        {/* Trending */}
         {trending.length > 0 && (
           <Card className="bg-card/50 border-white/5 mb-8">
             <CardContent className="p-5 space-y-3">
@@ -445,7 +629,7 @@ export default function MashupsPage() {
                   <div key={item.id} className="rounded-lg border border-white/5 bg-black/30 p-3 flex flex-col gap-2">
                     <div className="flex items-center justify-between">
                       <p className="text-white font-medium truncate" title={item.name}>{item.name}</p>
-                      <span className="text-[11px] text-gray-500">{item.playbackCount} ▶︎</span>
+                      <span className="text-[11px] text-gray-500">{item.playbackCount}</span>
                     </div>
                     <p className="text-xs text-gray-500 truncate">by {item.ownerName || 'Anonymous'}</p>
                     <div className="flex items-center gap-2 text-xs text-gray-400">
@@ -475,6 +659,67 @@ export default function MashupsPage() {
           </Card>
         )}
 
+        {/* Search + Filters + Batch */}
+        <div className="flex flex-col gap-4 mb-6">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
+              <Input
+                type="text"
+                placeholder="Search mashups..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 bg-card/50 border-white/10"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant={statusFilter === 'all' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setStatusFilter('all')}
+                className="border-white/10"
+              >
+                All
+              </Button>
+              <Button
+                variant={statusFilter === 'completed' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setStatusFilter('completed')}
+                className="border-white/10"
+              >
+                Completed
+              </Button>
+              <Button
+                variant={statusFilter === 'in-progress' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setStatusFilter('in-progress')}
+                className="border-white/10"
+              >
+                In Progress
+              </Button>
+            </div>
+          </div>
+
+          {/* Batch Operations Bar */}
+          {completedMashups.length > 0 && (
+            <BatchOperations
+              selectedIds={Array.from(selectedIds)}
+              totalCount={completedMashups.length}
+              onSelectAll={handleSelectAll}
+              onDeselectAll={handleDeselectAll}
+              onToggleSelect={handleToggleSelect}
+              onBatchDelete={handleBatchDelete}
+              onBatchDownload={handleBatchDownload}
+              onBatchMakePublic={() => handleBatchVisibility(true)}
+              onBatchMakePrivate={() => handleBatchVisibility(false)}
+              isDeleting={batchDeleting}
+              isDownloading={batchDownloading}
+              isUpdatingVisibility={batchUpdatingVisibility}
+            />
+          )}
+        </div>
+
+        {/* Mashup List */}
         {loading ? (
           <div className="space-y-4">
             {[...Array(3)].map((_, i) => (
@@ -497,7 +742,7 @@ export default function MashupsPage() {
             </CardContent>
           </Card>
         ) : (
-          <motion.div 
+          <motion.div
             className="space-y-4"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -511,104 +756,186 @@ export default function MashupsPage() {
                   exit={{ opacity: 0, x: -20 }}
                   transition={{ delay: index * 0.05 }}
                 >
-                  <Card className="bg-card/40 border-white/5 hover:border-primary/20 hover:bg-card/60 transition-all duration-300 backdrop-blur-md group">
+                  <Card className={`bg-card/40 border-white/5 hover:border-primary/20 hover:bg-card/60 transition-all duration-300 backdrop-blur-md group ${selectedIds.has(mashup.id) ? 'border-primary/40 bg-primary/5' : ''
+                    }`}>
                     <CardContent className="p-6">
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="flex items-center space-x-5 flex-1">
-                          <div className={`w-12 h-12 rounded-lg flex items-center justify-center bg-black/40 border border-white/5 ${
-                            mashup.status === 'completed' ? 'text-primary' : 'text-gray-500'
-                          }`}>
-                            <FileAudio className="w-6 h-6" />
+                      {/* Top Row: Checkbox + Info + Actions */}
+                      <div className="flex items-start gap-4">
+                        {/* Checkbox */}
+                        {mashup.status === 'completed' && (
+                          <div className="pt-1">
+                            <MashupCheckbox
+                              checked={selectedIds.has(mashup.id)}
+                              onChange={() => handleToggleSelect(mashup.id)}
+                            />
                           </div>
-                          <div>
-                            <div className="flex items-center space-x-3 mb-1">
-                              <h3 className="font-bold text-lg text-white group-hover:text-primary transition-colors">{mashup.name}</h3>
-                              <span className="px-2 py-0.5 rounded text-xs font-medium bg-white/5 text-gray-400 border border-white/5">
-                                {formatDuration(mashup.duration_seconds)}
-                              </span>
-                              <span className="px-2 py-0.5 rounded text-xs font-medium bg-white/5 text-gray-400 border border-white/5">
-                                {getStatusText(mashup.status)}
-                              </span>
-                              {mashup.latest_automation_job?.status === 'queued' && mashup.status !== 'completed' && mashup.status !== 'failed' && (
-                                <span className="px-2 py-0.5 rounded text-xs font-medium bg-amber-500/10 text-amber-200 border border-amber-500/20">
-                                  Queued
-                                </span>
-                              )}
-                              {mashup.is_public && (
-                                <span className="px-2 py-0.5 rounded text-xs font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
-                                  Public
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex flex-wrap items-center gap-3 text-sm text-gray-500">
-                              <span>{new Date(mashup.created_at).toLocaleString()}</span>
-                              <span className="w-1 h-1 rounded-full bg-gray-700" />
-                              <span>{mashup.playback_count} Plays</span>
-                              <span className="w-1 h-1 rounded-full bg-gray-700" />
-                              <span>{mashup.download_count} Downloads</span>
-                              {mashup.generation_time_ms && (
-                                <>
-                                  <span className="w-1 h-1 rounded-full bg-gray-700" />
-                                  <span>{(mashup.generation_time_ms / 1000).toFixed(1)}s render</span>
-                                </>
-                              )}
-                              {mashup.is_public && mashup.public_slug && (
-                                <>
-                                  <span className="w-1 h-1 rounded-full bg-gray-700" />
-                                  <button
-                                    className="text-primary/80 hover:text-primary underline decoration-dotted"
-                                    onClick={() => handleCopyLink(mashup.id, `${window.location.origin}/api/mashups/public?slug=${mashup.public_slug}`)}
-                                  >
-                                    Copy share link
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        </div>
+                        )}
 
-                        <div className="flex items-center flex-wrap gap-2">
-                          {mashup.status === 'completed' ? (
-                            <>
-                              <Button 
-                                variant={playingMashupId === mashup.id ? "default" : "outline"}
-                                size="sm" 
-                                className={`border-white/10 hover:bg-primary/10 hover:text-primary hover:border-primary/30 ${
-                                  playingMashupId === mashup.id ? "bg-primary text-primary-foreground border-primary" : ""
-                                }`}
-                                onClick={() => handlePlay(mashup.id)}
-                              >
-                                {playingMashupId === mashup.id && isPlaying ? (
-                                  <div className="flex items-center">
-                                    <div className="flex space-x-0.5 mr-2 h-3 items-end">
-                                      <motion.div animate={{ height: [4, 12, 6] }} transition={{ repeat: Infinity, duration: 0.5 }} className="w-0.5 bg-current rounded-full" />
-                                      <motion.div animate={{ height: [8, 4, 10] }} transition={{ repeat: Infinity, duration: 0.6 }} className="w-0.5 bg-current rounded-full" />
-                                      <motion.div animate={{ height: [6, 10, 4] }} transition={{ repeat: Infinity, duration: 0.7 }} className="w-0.5 bg-current rounded-full" />
-                                    </div>
-                                    Playing
+                        {/* Main Content */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-4 mb-3">
+                            <div className="flex items-center space-x-4 flex-1 min-w-0">
+                              <div className={`w-11 h-11 rounded-lg flex items-center justify-center bg-black/40 border border-white/5 flex-shrink-0 ${mashup.status === 'completed' ? 'text-primary' : 'text-gray-500'
+                                }`}>
+                                <FileAudio className="w-5 h-5" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2 mb-1">
+                                  <h3 className="font-bold text-base text-white group-hover:text-primary transition-colors truncate">{mashup.name}</h3>
+                                  <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-white/5 text-gray-400 border border-white/5 whitespace-nowrap">
+                                    {formatDuration(mashup.duration_seconds)}
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-white/5 text-gray-400 border border-white/5 whitespace-nowrap">
+                                    {getStatusText(mashup.status)}
+                                  </span>
+                                  {mashup.latest_automation_job?.status === 'queued' && mashup.status !== 'completed' && mashup.status !== 'failed' && (
+                                    <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-amber-500/10 text-amber-200 border border-amber-500/20">
+                                      Queued
+                                    </span>
+                                  )}
+                                  {mashup.is_public && (
+                                    <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+                                      Public
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
+                                  <span>{new Date(mashup.created_at).toLocaleString()}</span>
+                                  <span className="w-1 h-1 rounded-full bg-gray-700" />
+                                  <span>{mashup.playback_count} Plays</span>
+                                  <span className="w-1 h-1 rounded-full bg-gray-700" />
+                                  <span>{mashup.download_count} Downloads</span>
+                                  {mashup.generation_time_ms && (
+                                    <>
+                                      <span className="w-1 h-1 rounded-full bg-gray-700" />
+                                      <span>{(mashup.generation_time_ms / 1000).toFixed(1)}s render</span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Status / Actions */}
+                            <div className="flex items-center flex-wrap gap-2 flex-shrink-0">
+                              {mashup.status === 'completed' ? (
+                                <>
+                                  <Button
+                                    variant={playingMashupId === mashup.id ? "default" : "outline"}
+                                    size="sm"
+                                    className={`border-white/10 hover:bg-primary/10 hover:text-primary hover:border-primary/30 ${playingMashupId === mashup.id ? "bg-primary text-primary-foreground border-primary" : ""
+                                      }`}
+                                    onClick={() => handlePlay(mashup.id)}
+                                  >
+                                    {playingMashupId === mashup.id && isPlaying ? (
+                                      <div className="flex items-center">
+                                        <div className="flex space-x-0.5 mr-2 h-3 items-end">
+                                          <motion.div animate={{ height: [4, 12, 6] }} transition={{ repeat: Infinity, duration: 0.5 }} className="w-0.5 bg-current rounded-full" />
+                                          <motion.div animate={{ height: [8, 4, 10] }} transition={{ repeat: Infinity, duration: 0.6 }} className="w-0.5 bg-current rounded-full" />
+                                          <motion.div animate={{ height: [6, 10, 4] }} transition={{ repeat: Infinity, duration: 0.7 }} className="w-0.5 bg-current rounded-full" />
+                                        </div>
+                                        Playing
+                                      </div>
+                                    ) : (
+                                      <>
+                                        <Play className="w-4 h-4 mr-2" />
+                                        Play
+                                      </>
+                                    )}
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setPlaylistModalMashupId(mashup.id)}
+                                    className="text-gray-300 hover:text-primary"
+                                  >
+                                    <ListMusic className="w-4 h-4 mr-1.5" />
+                                    Playlist
+                                  </Button>
+                                  <ShareButtons
+                                    mashupId={mashup.id}
+                                    mashupName={mashup.name}
+                                    isPublic={!!mashup.is_public}
+                                    publicSlug={mashup.public_slug}
+                                  />
+                                </>
+                              ) : mashup.status === 'failed' ? (
+                                <div className="flex items-center gap-2 px-4">
+                                  <div className="flex items-center text-red-500">
+                                    <AlertCircle className="w-4 h-4 mr-2" />
+                                    Failed
                                   </div>
-                                ) : (
-                                  <>
-                                    <Play className="w-4 h-4 mr-2" />
-                                    Play
-                                  </>
-                                )}
-                              </Button>
-                              <Button 
-                                variant="outline" 
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleRetry(mashup.id)}
+                                    disabled={retryingId === mashup.id}
+                                    className="border-white/10 hover:bg-primary/10 hover:text-primary hover:border-primary/30 h-8 text-xs"
+                                  >
+                                    {retryingId === mashup.id ? (
+                                      <div className="flex items-center">
+                                        <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin mr-1.5" />
+                                        Retrying...
+                                      </div>
+                                    ) : (
+                                      <>
+                                        <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+                                        Retry
+                                      </>
+                                    )}
+                                  </Button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center text-primary px-4">
+                                  <div className="w-4 h-4 border-2 border-t-primary border-primary/30 rounded-full animate-spin mr-2" />
+                                  {mashup.latest_automation_job?.status === 'queued'
+                                    ? 'Queued'
+                                    : getStatusText(mashup.status)}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Mini Waveform - inline for completed mashups */}
+                          {mashup.status === 'completed' && (
+                            <div className="mt-2">
+                              <MiniWaveform
+                                mashupId={mashup.id}
+                                isPlaying={playingMashupId === mashup.id && isPlaying}
+                                progress={playingMashupId === mashup.id ? (audioProgress[mashup.id] || 0) : 0}
+                                onSeek={(percent) => {
+                                  if (playingMashupId === mashup.id) {
+                                    const audio = document.querySelector('audio');
+                                    if (audio && audio.duration) {
+                                      audio.currentTime = percent * audio.duration;
+                                    }
+                                  } else {
+                                    handlePlay(mashup.id);
+                                  }
+                                }}
+                                height={28}
+                                barCount={50}
+                              />
+                            </div>
+                          )}
+
+                          {/* Bottom Row: Secondary Actions */}
+                          {mashup.status === 'completed' && (
+                            <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-white/5">
+                              <Button
+                                variant="outline"
                                 size="sm"
                                 onClick={() => handleDownload(mashup.id, 'master')}
                                 disabled={downloadingId === `${mashup.id}:master`}
-                                className="border-white/10 hover:bg-primary/10 hover:text-primary hover:border-primary/30"
+                                className="border-white/10 hover:bg-primary/10 hover:text-primary hover:border-primary/30 h-8 text-xs"
                               >
                                 {downloadingId === `${mashup.id}:master` ? (
                                   <div className="flex items-center">
-                                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin mr-1.5" />
                                     Preparing
                                   </div>
                                 ) : (
                                   <>
-                                    <Download className="w-4 h-4 mr-2" />
+                                    <Download className="w-3.5 h-3.5 mr-1.5" />
                                     WAV
                                   </>
                                 )}
@@ -618,16 +945,16 @@ export default function MashupsPage() {
                                 size="sm"
                                 onClick={() => handleDownload(mashup.id, 'playback')}
                                 disabled={downloadingId === `${mashup.id}:playback`}
-                                className="border-white/10 hover:bg-primary/10 hover:text-primary hover:border-primary/30"
+                                className="border-white/10 hover:bg-primary/10 hover:text-primary hover:border-primary/30 h-8 text-xs"
                               >
                                 {downloadingId === `${mashup.id}:playback` ? (
                                   <div className="flex items-center">
-                                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                                    <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin mr-1.5" />
                                     Preparing
                                   </div>
                                 ) : (
                                   <>
-                                    <Download className="w-4 h-4 mr-2" />
+                                    <Download className="w-3.5 h-3.5 mr-1.5" />
                                     MP3
                                   </>
                                 )}
@@ -637,7 +964,7 @@ export default function MashupsPage() {
                                 size="sm"
                                 onClick={() => handleTogglePublic(mashup.id, !mashup.is_public)}
                                 disabled={togglingId === mashup.id}
-                                className="border-white/10 hover:bg-primary/10 hover:text-primary hover:border-primary/30"
+                                className="border-white/10 hover:bg-primary/10 hover:text-primary hover:border-primary/30 h-8 text-xs"
                               >
                                 {togglingId === mashup.id ? 'Saving...' : mashup.is_public ? 'Make Private' : 'Make Public'}
                               </Button>
@@ -646,46 +973,43 @@ export default function MashupsPage() {
                                 size="sm"
                                 onClick={() => handleFork(mashup.id)}
                                 disabled={forkingId === mashup.id}
-                                className="text-gray-300 hover:text-primary"
+                                className="text-gray-300 hover:text-primary h-8 text-xs"
                               >
-                                <Sparkles className="w-4 h-4 mr-2" />
+                                <Sparkles className="w-3.5 h-3.5 mr-1.5" />
                                 {forkingId === mashup.id ? 'Remixing...' : 'Remix'}
                               </Button>
                               {!submittedFeedback[mashup.id] && (
-                                <Button 
-                                  variant="ghost" 
+                                <Button
+                                  variant="ghost"
                                   size="sm"
                                   onClick={() => setSurveyMashupId(mashup.id)}
-                                  className="text-gray-300 hover:text-primary"
+                                  className="text-gray-300 hover:text-primary h-8 text-xs"
                                 >
-                                  <Sparkles className="w-4 h-4 mr-2" />
+                                  <Sparkles className="w-3.5 h-3.5 mr-1.5" />
                                   Rate
                                 </Button>
                               )}
-                            </>
-                          ) : mashup.status === 'failed' ? (
-                            <div className="flex items-center text-red-500 px-4">
-                              <AlertCircle className="w-4 h-4 mr-2" />
-                              Failed
-                            </div>
-                          ) : (
-                            <div className="flex items-center text-primary px-4">
-                              <div className="w-4 h-4 border-2 border-t-primary border-primary/30 rounded-full animate-spin mr-2" />
-                              {mashup.latest_automation_job?.status === 'queued'
-                                ? 'Queued'
-                                : getStatusText(mashup.status)}
+                              {mashup.is_public && mashup.public_slug && (
+                                <button
+                                  className="text-primary/80 hover:text-primary underline decoration-dotted text-xs ml-1"
+                                  onClick={() => handleCopyLink(mashup.id, `${window.location.origin}/api/mashups/public?slug=${mashup.public_slug}`)}
+                                >
+                                  Copy link
+                                </button>
+                              )}
+                              <div className="flex-1" />
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleDelete(mashup.id)}
+                                disabled={deletingId === mashup.id}
+                                className="text-gray-600 hover:text-destructive hover:bg-destructive/10 h-8 w-8"
+                                aria-label={`Delete mashup ${mashup.name}`}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                              </Button>
                             </div>
                           )}
-                          <Button 
-                            variant="ghost" 
-                            size="icon"
-                            onClick={() => handleDelete(mashup.id)}
-                            disabled={mashup.status === 'generating' || deletingId === mashup.id}
-                            className="text-gray-600 hover:text-destructive hover:bg-destructive/10"
-                            aria-label={`Delete mashup ${mashup.name}`}
-                          >
-                            <Trash2 className="w-4 h-4" aria-hidden="true" />
-                          </Button>
                         </div>
                       </div>
                     </CardContent>
@@ -696,6 +1020,29 @@ export default function MashupsPage() {
           </motion.div>
         )}
 
+        {/* Load More */}
+        {hasMore && !loading && mashups.length > 0 && (
+          <div className="flex justify-center mt-6">
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={() => fetchMashups({ append: true })}
+              disabled={loadingMore}
+              className="border-white/10 hover:bg-primary/10 hover:text-primary hover:border-primary/30"
+            >
+              {loadingMore ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                  Loading...
+                </>
+              ) : (
+                'Load More'
+              )}
+            </Button>
+          </div>
+        )}
+
+        {/* Feedback Survey */}
         {surveyMashupId && (
           <div className="mt-10">
             <SatisfactionSurvey onSubmit={handleFeedbackSubmit} className="max-w-3xl mx-auto" />
@@ -703,6 +1050,7 @@ export default function MashupsPage() {
           </div>
         )}
 
+        {/* Audio Player */}
         <AnimatePresence>
           {currentMashup && (
             <AudioPlayer
@@ -719,6 +1067,29 @@ export default function MashupsPage() {
             />
           )}
         </AnimatePresence>
+
+        {/* Playlist Modal */}
+        <AnimatePresence>
+          {playlistModalMashupId && (
+            <PlaylistModal
+              isOpen={!!playlistModalMashupId}
+              onClose={() => setPlaylistModalMashupId(null)}
+              mashupId={playlistModalMashupId}
+              onAdded={() => { }}
+            />
+          )}
+        </AnimatePresence>
+
+        {/* Confirm Dialog */}
+        <ConfirmDialog
+          isOpen={confirmDialog.open}
+          onClose={() => setConfirmDialog((prev) => ({ ...prev, open: false }))}
+          onConfirm={confirmDialog.onConfirm}
+          title={confirmDialog.title}
+          description={confirmDialog.description}
+          confirmText="Delete"
+          variant="destructive"
+        />
       </main>
     </div>
   );

@@ -42,16 +42,28 @@ export interface Track {
   created_at: string;
 }
 
-function Waveform({ beatGrid, waveformLite }: { beatGrid?: number[]; waveformLite?: number[] }) {
+function Waveform({ beatGrid, waveformLite, onClick }: { beatGrid?: number[]; waveformLite?: number[]; onClick?: (fraction: number) => void }) {
   if (waveformLite && waveformLite.length > 0) {
     const peak = Math.max(...waveformLite, 1);
     const normalized = waveformLite.slice(0, 200).map((v) => Math.min(1, v / peak));
+    const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!onClick) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const fraction = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+      onClick(fraction);
+    };
     return (
-      <div className="mt-2 flex h-12 items-end gap-0.5 overflow-hidden">
+      <div
+        className="mt-2 flex h-12 items-end gap-0.5 overflow-hidden cursor-pointer group"
+        onClick={handleClick}
+        role="slider"
+        aria-label="Waveform - click to seek"
+        tabIndex={0}
+      >
         {normalized.map((v, idx) => (
           <div
             key={idx}
-            className="flex-1 rounded-sm bg-gradient-to-t from-primary/30 via-primary/60 to-white/80"
+            className="flex-1 rounded-sm bg-gradient-to-t from-primary/30 via-primary/60 to-white/80 group-hover:from-primary/50 group-hover:via-primary/80 group-hover:to-white/95 transition-colors duration-100"
             style={{ height: `${Math.max(8, Math.round(v * 100))}%` }}
           />
         ))}
@@ -79,11 +91,12 @@ interface TrackListProps {
   tracks: Track[];
   onRemoveTrack?: (id: string) => void;
   onStemsUpdated?: () => void;
+  onWaveformClick?: (trackId: string, fraction: number) => void;
   className?: string;
   isLoading?: boolean;
 }
 
-export function TrackList({ tracks, onRemoveTrack, onStemsUpdated, className, isLoading }: TrackListProps) {
+export function TrackList({ tracks, onRemoveTrack, onStemsUpdated, onWaveformClick, className, isLoading }: TrackListProps) {
   const [separatingIds, setSeparatingIds] = useState<Set<string>>(new Set());
 
   const handleSeparateStems = async (trackId: string) => {
@@ -281,7 +294,7 @@ export function TrackList({ tracks, onRemoveTrack, onStemsUpdated, className, is
                     )}
                   </div>
                 )}
-                {track.analysis_status === 'completed' && <Waveform beatGrid={track.beat_grid} waveformLite={track.waveform_lite} />}
+                {track.analysis_status === 'completed' && <Waveform beatGrid={track.beat_grid} waveformLite={track.waveform_lite} onClick={onWaveformClick ? (fraction) => onWaveformClick(track.id, fraction) : undefined} />}
                 {/* Section structure tags */}
                 {track.analysis_status === 'completed' && track.structure && track.structure.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1.5">

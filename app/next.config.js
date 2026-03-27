@@ -40,12 +40,21 @@ const nextConfig = {
   // Enable trailing slash for consistency
   trailingSlash: true,
   
-  // Externalize native packages that shouldn't be bundled
+  // Externalize native packages that shouldn't be bundled (Turbopack-compatible)
   serverExternalPackages: ['ffmpeg-static', 'fluent-ffmpeg', 'music-metadata', 'pitchfinder'],
+  
+  // Turbopack configuration (Next.js 16 - top-level, not experimental)
+  turbopack: {
+    resolveAlias: {
+      // Use a safe stub for next/document to avoid runtime Html import errors during prerender
+      'next/document': './src/lib/next-document-stub.tsx',
+      'next/dist/shared/lib/document': './src/lib/next-document-stub.tsx',
+    },
+  },
   
   // Image optimizations for production
   images: {
-    domains: [],
+    remotePatterns: [],
     formats: ['image/webp', 'image/avif'],
   },
   
@@ -99,30 +108,6 @@ const nextConfig = {
         ],
       },
     ];
-  },
-  
-  // Environment-specific optimizations
-  webpack: (config, { dev }) => {
-    // Use a safe stub for next/document to avoid runtime Html import errors during prerender
-    const documentStub = path.join(__dirname, 'src/lib/next-document-stub.tsx');
-    config.resolve.alias['next/document'] = documentStub;
-    config.resolve.alias['next/dist/shared/lib/document'] = documentStub;
-
-    // Suppress fluent-ffmpeg's dynamic require warnings
-    config.ignoreWarnings = [
-      { module: /node_modules\/fluent-ffmpeg/ }
-    ];
-
-    // Production optimizations
-    if (!dev) {
-      config.optimization = {
-        ...config.optimization,
-        usedExports: true,
-        sideEffects: false,
-      };
-    }
-    
-    return config;
   },
 };
 

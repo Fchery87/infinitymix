@@ -13,10 +13,16 @@ interface AudioPlayerProps {
   onClose: () => void;
   onTogglePlay: () => void;
   onEnded?: () => void;
+  onAudioRef?: (audio: HTMLAudioElement | null) => void;
+  containerRef?: React.Ref<HTMLDivElement>;
 }
 
-export function AudioPlayer({ trackName, duration, isPlaying, src, onClose, onTogglePlay, onEnded }: AudioPlayerProps) {
+export function AudioPlayer({ trackName, duration, isPlaying, src, onClose, onTogglePlay, onEnded, onAudioRef, containerRef }: AudioPlayerProps) {
   const audioRef = React.useRef<HTMLAudioElement | null>(null);
+
+  React.useEffect(() => {
+    onAudioRef?.(audioRef.current);
+  }, [src, onAudioRef]);
   const [progress, setProgress] = React.useState(0);
   const [currentTime, setCurrentTime] = React.useState(0);
   const [displayDuration, setDisplayDuration] = React.useState(duration);
@@ -105,6 +111,7 @@ export function AudioPlayer({ trackName, duration, isPlaying, src, onClose, onTo
 
   return (
     <motion.div
+      ref={containerRef}
       initial={{ y: 100, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       exit={{ y: 100, opacity: 0 }}

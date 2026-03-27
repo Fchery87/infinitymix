@@ -181,6 +181,7 @@ export const projects = pgTable(
     color: varchar('color', { length: 7 }).default('#6366f1'), // Default indigo
     bpmLock: decimal('bpm_lock', { precision: 6, scale: 2 }),
     keyLock: varchar('key_lock', { length: 20 }),
+    isPinned: boolean('is_pinned').notNull().default(false),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
   },
@@ -770,3 +771,91 @@ export type ExperimentVariant = typeof experimentVariants.$inferSelect;
 export type NewExperimentVariant = typeof experimentVariants.$inferInsert;
 export type ExperimentAssignment = typeof experimentAssignments.$inferSelect;
 export type NewExperimentAssignment = typeof experimentAssignments.$inferInsert;
+
+// Playlists
+export const playlists = pgTable(
+  'playlists',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    name: varchar('name', { length: 255 }).notNull(),
+    description: text('description'),
+    isPublic: boolean('is_public').notNull().default(false),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdIdx: index('idx_playlists_user_id').on(table.userId),
+  })
+);
+
+export const playlistItems = pgTable(
+  'playlist_items',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    playlistId: uuid('playlist_id')
+      .notNull()
+      .references(() => playlists.id, { onDelete: 'cascade' }),
+    mashupId: uuid('mashup_id')
+      .notNull()
+      .references(() => mashups.id, { onDelete: 'cascade' }),
+    sortOrder: integer('sort_order').notNull().default(0),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    playlistMashupUnique: uniqueIndex('uq_playlist_mashup').on(
+      table.playlistId,
+      table.mashupId
+    ),
+    playlistIdIdx: index('idx_playlist_items_playlist_id').on(table.playlistId),
+  })
+);
+
+export type Playlist = typeof playlists.$inferSelect;
+export type NewPlaylist = typeof playlists.$inferInsert;
+export type PlaylistItem = typeof playlistItems.$inferSelect;
+export type NewPlaylistItem = typeof playlistItems.$inferInsert;
+
+// Waitlist
+export const waitlist = pgTable('waitlist', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  email: varchar('email', { length: 255 }).notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+});
+
+export type WaitlistEntry = typeof waitlist.$inferSelect;
+export type NewWaitlistEntry = typeof waitlist.$inferInsert;
+
+// Notifications
+export const notificationTypeEnum = pgEnum('notification_type', [
+  'mashup_completed',
+  'collab_invite',
+  'quota_warning',
+  'mashup_public',
+]);
+
+export const notifications = pgTable(
+  'notifications',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    type: notificationTypeEnum('type').notNull(),
+    title: varchar('title', { length: 255 }).notNull(),
+    message: text('message'),
+    link: varchar('link', { length: 512 }),
+    readAt: timestamp('read_at'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdIdx: index('idx_notifications_user_id').on(table.userId),
+    createdAtIdx: index('idx_notifications_created_at').on(table.createdAt),
+    unreadIdx: index('idx_notifications_unread').on(table.userId, table.readAt),
+  })
+);
+
+export type Notification = typeof notifications.$inferSelect;
+export type NewNotification = typeof notifications.$inferInsert;

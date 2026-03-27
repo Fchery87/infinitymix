@@ -2,16 +2,147 @@
 
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { motion } from 'framer-motion';
-import { ArrowRight, Music, Zap, Layers, Wand2, PlayCircle, Radio, Check, Upload, Sliders, Download } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ArrowRight, Music, Zap, Layers, Wand2, PlayCircle, Radio, Check, Upload, Sliders, Download, Users, TrendingUp, Headphones, X, Mail, Sparkles } from 'lucide-react';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { Input } from '@/components/ui/input';
+
+// Default pricing tiers as fallback
+const DEFAULT_PLANS = [
+  {
+    slug: 'free',
+    name: 'Bedroom Producer',
+    priceCents: 0,
+    monthlyMinutes: 60,
+    features: ['3 Mashups per day', 'MP3 Quality Export', 'Standard Processing Speed', 'Basic Stem Separation'],
+    ctaText: 'Start for Free',
+    ctaLink: '/register',
+  },
+  {
+    slug: 'pro',
+    name: 'Touring DJ',
+    priceCents: 1900,
+    monthlyMinutes: 480,
+    features: ['Unlimited Mashups', 'Lossless WAV Export', 'Priority GPU Processing', 'Advanced Stem Separation', 'Commercial License'],
+    ctaText: 'Go Pro',
+    ctaLink: '/register',
+    isPopular: true,
+  },
+  {
+    slug: 'enterprise',
+    name: 'Studio',
+    priceCents: 4900,
+    monthlyMinutes: -1,
+    features: ['Everything in Pro', 'API Access', 'Collaboration Tools', 'Custom Branding', 'Dedicated Support'],
+    ctaText: 'Contact Sales',
+    ctaLink: '#',
+  },
+];
+
+const FALLBACK_STATS = { userCount: 12480, mashupsThisWeek: 3847 };
+
+interface PlanData {
+  slug: string;
+  name: string;
+  priceCents: number;
+  monthlyMinutes: number;
+  features?: string[];
+  ctaText?: string;
+  ctaLink?: string;
+  isPopular?: boolean;
+}
+
+// Default features by slug if DB doesn't have them
+const PLAN_FEATURES: Record<string, string[]> = {
+  free: ['3 Mashups per day', 'MP3 Quality Export', 'Standard Processing Speed', 'Basic Stem Separation'],
+  pro: ['Unlimited Mashups', 'Lossless WAV Export', 'Priority GPU Processing', 'Advanced Stem Separation', 'Commercial License'],
+  enterprise: ['Everything in Pro', 'API Access', 'Collaboration Tools', 'Custom Branding', 'Dedicated Support'],
+};
 
 export default function LandingPage() {
+  const [plans, setPlans] = useState<PlanData[]>(DEFAULT_PLANS);
+  const [stats, setStats] = useState(FALLBACK_STATS);
+  const [showDemoPlayer, setShowDemoPlayer] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [showWaitlist, setShowWaitlist] = useState(false);
+  const [waitlistEmail, setWaitlistEmail] = useState('');
+  const [waitlistStatus, setWaitlistStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [waitlistMessage, setWaitlistMessage] = useState('');
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  useEffect(() => {
+    fetch('/api/admin/plans')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.plans?.length > 0) {
+          const mapped = data.plans.map((p: PlanData) => ({
+            ...p,
+            features: PLAN_FEATURES[p.slug] ?? [`Monthly ${p.monthlyMinutes > 0 ? `${p.monthlyMinutes} minutes` : 'Unlimited'}`, 'Priority Processing'],
+            ctaText: p.priceCents === 0 ? 'Start for Free' : p.slug === 'enterprise' ? 'Contact Sales' : 'Go Pro',
+            ctaLink: '/register',
+            isPopular: p.slug === 'pro',
+          }));
+          setPlans(mapped);
+        }
+      })
+      .catch(() => {
+        // Keep default plans on error
+      });
+
+    fetch('/api/stats/public')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.userCount > 0) setStats(data);
+      })
+      .catch(() => {
+        // Keep fallback stats
+      });
+  }, []);
+
+  const handleWaitlist = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!waitlistEmail) return;
+
+    setWaitlistStatus('loading');
+    try {
+      const res = await fetch('/api/waitlist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: waitlistEmail }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setWaitlistStatus('success');
+        setWaitlistMessage(data.message);
+        setWaitlistEmail('');
+      } else {
+        setWaitlistStatus('error');
+        setWaitlistMessage(data.error || 'Something went wrong');
+      }
+    } catch {
+      setWaitlistStatus('error');
+      setWaitlistMessage('Network error. Please try again.');
+    }
+  }, [waitlistEmail]);
+
+  const toggleDemoPlay = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (isPlaying) {
+      audio.pause();
+      setIsPlaying(false);
+    } else {
+      audio.play().catch(() => {});
+      setIsPlaying(true);
+    }
+  }, [isPlaying]);
+
   const stagger = {
     animate: {
       transition: {
-        staggerChildren: 0.1
-      }
-    }
+        staggerChildren: 0.1,
+      },
+    },
   };
 
   return (
@@ -52,9 +183,9 @@ export default function LandingPage() {
         {/* Background Elements */}
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[500px] bg-primary/20 rounded-full blur-[120px] opacity-30 pointer-events-none" />
         <div className="absolute bottom-0 right-0 w-[800px] h-[600px] bg-blue-600/10 rounded-full blur-[100px] opacity-20 pointer-events-none" />
-        
+
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 text-center">
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8 }}
@@ -63,8 +194,8 @@ export default function LandingPage() {
             <span className="flex h-2 w-2 rounded-full bg-primary mr-2 animate-pulse"></span>
             AI Music Engine v2.0 is Live
           </motion.div>
-          
-          <motion.h1 
+
+          <motion.h1
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, delay: 0.2 }}
@@ -75,8 +206,8 @@ export default function LandingPage() {
               Mashups in Seconds
             </span>
           </motion.h1>
-          
-          <motion.p 
+
+          <motion.p
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, delay: 0.4 }}
@@ -84,8 +215,8 @@ export default function LandingPage() {
           >
             No DAW required. Upload your favorite tracks and let our advanced AI engine handle beatmatching, key alignment, and stem separation automatically.
           </motion.p>
-          
-          <motion.div 
+
+          <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, delay: 0.6 }}
@@ -96,13 +227,18 @@ export default function LandingPage() {
                 Start Creating Now
               </Button>
             </Link>
-            <Button size="lg" variant="outline" className="h-14 px-8 text-lg border-white/10 hover:bg-white/5 w-full sm:w-auto">
+            <Button
+              size="lg"
+              variant="outline"
+              className="h-14 px-8 text-lg border-white/10 hover:bg-white/5 w-full sm:w-auto"
+              onClick={() => setShowDemoPlayer(true)}
+            >
               <PlayCircle className="mr-2 w-5 h-5" /> Listen to Demos
             </Button>
           </motion.div>
 
           {/* UI Mockup */}
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, y: 40, rotateX: 20 }}
             animate={{ opacity: 1, y: 0, rotateX: 0 }}
             transition={{ duration: 1, delay: 0.8 }}
@@ -112,20 +248,20 @@ export default function LandingPage() {
               <div className="rounded-lg bg-black/60 aspect-video w-full flex items-center justify-center relative overflow-hidden">
                 <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1614149162883-504ce4d13909?q=80&w=2574&auto=format&fit=crop')] bg-cover bg-center opacity-20" />
                 <div className="absolute inset-0 bg-gradient-to-t from-background via-transparent to-transparent" />
-                
+
                 {/* Mock Interface Elements */}
                 <div className="relative z-10 w-full h-full p-8 flex flex-col justify-end">
                   <div className="flex items-end space-x-2 mb-8 justify-center">
                     {[40, 70, 50, 90, 30, 60, 80, 40, 60, 50, 80, 40, 30, 70, 50].map((h, i) => (
-                      <motion.div 
+                      <motion.div
                         key={i}
                         initial={{ height: 10 }}
                         animate={{ height: `${h}%` }}
-                        transition={{ 
-                          duration: 1.5, 
-                          repeat: Infinity, 
-                          repeatType: "reverse",
-                          delay: i * 0.1 
+                        transition={{
+                          duration: 1.5,
+                          repeat: Infinity,
+                          repeatType: 'reverse',
+                          delay: i * 0.1,
                         }}
                         className="w-3 bg-primary/80 rounded-t-sm shadow-[0_0_15px_rgba(249,115,22,0.5)]"
                       />
@@ -168,24 +304,24 @@ export default function LandingPage() {
             </p>
           </div>
 
-          <motion.div 
+          <motion.div
             variants={stagger}
             initial="initial"
             whileInView="animate"
             viewport={{ once: true }}
             className="grid md:grid-cols-3 gap-8"
           >
-            <FeatureCard 
+            <FeatureCard
               icon={<Layers className="w-8 h-8 text-primary" />}
               title="Stem Separation"
               description="Isolate vocals, drums, bass, and instruments from any track with studio-quality precision using our proprietary neural networks."
             />
-            <FeatureCard 
+            <FeatureCard
               icon={<Radio className="w-8 h-8 text-blue-400" />}
               title="Smart Sync"
               description="Automatic BPM detection and elastic time-stretching ensures your tracks are always locked in perfect time, preserving transient punch."
             />
-            <FeatureCard 
+            <FeatureCard
               icon={<Wand2 className="w-8 h-8 text-purple-400" />}
               title="Harmonic Mixing"
               description="AI analyzes musical keys and suggests compatible tracks, pitch-shifting when necessary for dissonant-free mixes aligned by circle of fifths."
@@ -206,19 +342,19 @@ export default function LandingPage() {
           </div>
 
           <div className="grid md:grid-cols-3 gap-12">
-            <StepCard 
+            <StepCard
               number="01"
               icon={<Upload className="w-6 h-6 text-white" />}
               title="Upload Tracks"
               description="Drag and drop any MP3 or WAV files. We support up to 5 tracks per mashup project."
             />
-            <StepCard 
+            <StepCard
               number="02"
               icon={<Sliders className="w-6 h-6 text-white" />}
               title="Configure AI"
               description="Select your target duration and style intensity. Our AI analyzes structure, drops, and choruses."
             />
-            <StepCard 
+            <StepCard
               number="03"
               icon={<Download className="w-6 h-6 text-white" />}
               title="Export & Share"
@@ -239,55 +375,74 @@ export default function LandingPage() {
           </div>
 
           <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
-            {/* Free Plan */}
-            <PricingCard 
-              title="Bedroom Producer"
-              price="$0"
-              description="Perfect for experimenting and making quick mashups."
-              features={[
-                "3 Mashups per day",
-                "MP3 Quality Export",
-                "Standard Processing Speed",
-                "Basic Stem Separation"
-              ]}
-              ctaText="Start for Free"
-              ctaLink="/create"
-            />
-            
-            {/* Pro Plan */}
-            <PricingCard 
-              title="Touring DJ"
-              price="$19"
-              period="/month"
-              description="For serious creators who need studio quality."
-              isPopular={true}
-              features={[
-                "Unlimited Mashups",
-                "Lossless WAV Export",
-                "Priority GPU Processing",
-                "Advanced Stem Separation",
-                "Commercial License"
-              ]}
-              ctaText="Go Pro"
-              ctaLink="/create"
-            />
+            {plans.map((plan) => (
+              <PricingCard
+                key={plan.slug}
+                title={plan.name}
+                price={`$${(plan.priceCents / 100).toFixed(0)}`}
+                period={plan.priceCents > 0 ? '/month' : ''}
+                description={plan.priceCents === 0 ? 'Perfect for experimenting and making quick mashups.' : plan.isPopular ? 'For serious creators who need studio quality.' : 'Power features for production teams.'}
+                features={plan.features ?? PLAN_FEATURES[plan.slug] ?? []}
+                ctaText={plan.ctaText ?? 'Get Started'}
+                ctaLink={plan.ctaLink ?? '/register'}
+                isPopular={plan.isPopular}
+              />
+            ))}
+          </div>
+        </div>
+      </section>
 
-            {/* Enterprise Plan */}
-            <PricingCard 
-              title="Studio"
-              price="$49"
-              period="/month"
-              description="Power features for production teams."
-              features={[
-                "Everything in Pro",
-                "API Access",
-                "Collaboration Tools",
-                "Custom Branding",
-                "Dedicated Support"
-              ]}
-              ctaText="Contact Sales"
-              ctaLink="#"
-            />
+      {/* Social Proof Section */}
+      <section className="py-20 relative">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.5 }}
+              className="text-center p-8 rounded-2xl border border-white/5 bg-card/20"
+            >
+              <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
+                <Users className="w-7 h-7 text-primary" />
+              </div>
+              <div className="text-4xl font-bold text-white mb-1">
+                {stats.userCount.toLocaleString()}+
+              </div>
+              <p className="text-gray-400">Creators on the platform</p>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.5, delay: 0.1 }}
+              className="text-center p-8 rounded-2xl border border-white/5 bg-card/20"
+            >
+              <div className="w-14 h-14 rounded-full bg-blue-500/10 flex items-center justify-center mx-auto mb-4">
+                <Headphones className="w-7 h-7 text-blue-400" />
+              </div>
+              <div className="text-4xl font-bold text-white mb-1">
+                {stats.mashupsThisWeek.toLocaleString()}
+              </div>
+              <p className="text-gray-400">Mashups created this week</p>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.5, delay: 0.2 }}
+              className="text-center p-8 rounded-2xl border border-white/5 bg-card/20"
+            >
+              <div className="w-14 h-14 rounded-full bg-purple-500/10 flex items-center justify-center mx-auto mb-4">
+                <TrendingUp className="w-7 h-7 text-purple-400" />
+              </div>
+              <div className="text-4xl font-bold text-white mb-1">
+                98%
+              </div>
+              <p className="text-gray-400">User satisfaction rate</p>
+            </motion.div>
           </div>
         </div>
       </section>
@@ -300,13 +455,23 @@ export default function LandingPage() {
           <p className="text-xl text-gray-400 mb-10">
             Join thousands of creators making viral mashups with InfinityMix.
           </p>
-          <Link href="/create">
-            <Button size="lg" variant="glow" className="h-16 px-12 text-xl rounded-full">
-              Launch Studio
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <Link href="/create">
+              <Button size="lg" variant="glow" className="h-16 px-12 text-xl rounded-full">
+                Launch Studio
+              </Button>
+            </Link>
+            <Button
+              size="lg"
+              variant="outline"
+              className="h-16 px-12 text-xl rounded-full border-white/10 hover:bg-white/5"
+              onClick={() => setShowWaitlist(true)}
+            >
+              <Mail className="mr-2 w-5 h-5" /> Join Waitlist
             </Button>
-          </Link>
+          </div>
           <p className="mt-6 text-sm text-gray-500">
-            No credit card required • Free tier available
+            No credit card required &bull; Free tier available
           </p>
         </div>
       </section>
@@ -320,26 +485,184 @@ export default function LandingPage() {
               <span className="text-lg font-bold text-gray-400">InfinityMix</span>
             </div>
             <div className="flex space-x-8 text-sm text-gray-500">
-              <a href="#" className="hover:text-white transition-colors">Terms</a>
-              <a href="#" className="hover:text-white transition-colors">Privacy</a>
-              <a href="#" className="hover:text-white transition-colors">Contact</a>
+              <Link href="/terms" className="hover:text-white transition-colors">Terms</Link>
+              <Link href="/privacy" className="hover:text-white transition-colors">Privacy</Link>
+              <a href="mailto:hello@infinitymix.com" className="hover:text-white transition-colors">Contact</a>
             </div>
             <div className="mt-4 md:mt-0 text-sm text-gray-600">
-              © 2024 InfinityMix. All rights reserved.
+              &copy; {new Date().getFullYear()} InfinityMix. All rights reserved.
             </div>
           </div>
         </div>
       </footer>
+
+      {/* Demo Player Modal */}
+      <AnimatePresence>
+        {showDemoPlayer && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+            onClick={() => { setShowDemoPlayer(false); setIsPlaying(false); audioRef.current?.pause(); }}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="relative w-full max-w-lg rounded-2xl border border-white/10 bg-card/95 backdrop-blur-xl p-8 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                onClick={() => { setShowDemoPlayer(false); setIsPlaying(false); audioRef.current?.pause(); }}
+                className="absolute top-4 right-4 p-2 hover:bg-white/10 rounded-full transition-colors"
+                aria-label="Close demo player"
+              >
+                <X className="w-5 h-5 text-gray-400" />
+              </button>
+
+              <div className="text-center">
+                <div className="w-20 h-20 rounded-full bg-gradient-to-br from-primary/20 to-orange-600/20 flex items-center justify-center mx-auto mb-6 border border-primary/20">
+                  <Headphones className="w-10 h-10 text-primary" />
+                </div>
+                <h3 className="text-2xl font-bold mb-2">Hear What Our AI Can Do</h3>
+                <p className="text-gray-400 mb-8">A sample mashup generated entirely by the InfinityMix engine.</p>
+
+                <div className="bg-black/40 rounded-xl p-4 mb-6 border border-white/5">
+                  <div className="flex items-center gap-4">
+                    <button
+                      onClick={toggleDemoPlay}
+                      className="w-12 h-12 rounded-full bg-primary flex items-center justify-center shadow-lg shadow-primary/30 hover:scale-105 transition-transform active:scale-95"
+                      aria-label={isPlaying ? 'Pause demo' : 'Play demo'}
+                    >
+                      {isPlaying ? (
+                        <svg className="w-5 h-5 fill-white" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                      ) : (
+                        <PlayCircle className="w-6 h-6 fill-white" />
+                      )}
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-semibold text-white truncate">Summer Vibes Mashup</h4>
+                      <p className="text-xs text-gray-400">Generated by InfinityMix AI &bull; 3:24</p>
+                    </div>
+                    <div className="flex items-end gap-0.5 h-8">
+                      {[30, 60, 45, 80, 35, 55, 70, 40, 65, 50].map((h, i) => (
+                        <motion.div
+                          key={i}
+                          animate={{
+                            height: isPlaying ? [`${h * 0.5}%`, `${h}%`, `${h * 0.6}%`] : `${h * 0.4}%`,
+                          }}
+                          transition={{ duration: 0.6, repeat: isPlaying ? Infinity : 0, delay: i * 0.05 }}
+                          className="w-1 bg-primary/60 rounded-t-sm"
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <p className="text-xs text-gray-500">
+                  <Sparkles className="w-3 h-3 inline mr-1" />
+                  This mashup was created with just 2 track uploads. Try it yourself!
+                </p>
+              </div>
+
+              <audio
+                ref={audioRef}
+                onEnded={() => setIsPlaying(false)}
+                className="hidden"
+              />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Waitlist Modal */}
+      <AnimatePresence>
+        {showWaitlist && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+            onClick={() => setShowWaitlist(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="relative w-full max-w-md rounded-2xl border border-white/10 bg-card/95 backdrop-blur-xl p-8 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                onClick={() => setShowWaitlist(false)}
+                className="absolute top-4 right-4 p-2 hover:bg-white/10 rounded-full transition-colors"
+                aria-label="Close waitlist modal"
+              >
+                <X className="w-5 h-5 text-gray-400" />
+              </button>
+
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-primary/20 to-orange-600/20 flex items-center justify-center mx-auto mb-4 border border-primary/20">
+                  <Mail className="w-8 h-8 text-primary" />
+                </div>
+                <h3 className="text-2xl font-bold mb-2">Join the Waitlist</h3>
+                <p className="text-gray-400">Get early access to new features and exclusive content.</p>
+              </div>
+
+              {waitlistStatus === 'success' ? (
+                <div className="text-center py-4">
+                  <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-3">
+                    <Check className="w-6 h-6 text-green-400" />
+                  </div>
+                  <p className="text-green-400 font-medium">{waitlistMessage}</p>
+                  <Button
+                    variant="ghost"
+                    className="mt-4 text-gray-400"
+                    onClick={() => { setShowWaitlist(false); setWaitlistStatus('idle'); }}
+                  >
+                    Close
+                  </Button>
+                </div>
+              ) : (
+                <form onSubmit={handleWaitlist} className="space-y-4">
+                  <Input
+                    type="email"
+                    placeholder="you@example.com"
+                    value={waitlistEmail}
+                    onChange={(e) => setWaitlistEmail(e.target.value)}
+                    required
+                    className="text-center"
+                  />
+                  {waitlistStatus === 'error' && (
+                    <p className="text-red-400 text-sm text-center">{waitlistMessage}</p>
+                  )}
+                  <Button
+                    type="submit"
+                    variant="glow"
+                    className="w-full"
+                    disabled={waitlistStatus === 'loading'}
+                  >
+                    {waitlistStatus === 'loading' ? 'Joining...' : 'Join Waitlist'}
+                  </Button>
+                  <p className="text-xs text-gray-500 text-center">
+                    No spam. Unsubscribe anytime.
+                  </p>
+                </form>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-function FeatureCard({ icon, title, description }: { icon: React.ReactNode, title: string, description: string }) {
+function FeatureCard({ icon, title, description }: { icon: React.ReactNode; title: string; description: string }) {
   return (
-    <motion.div 
+    <motion.div
       variants={{
         initial: { opacity: 0, y: 20 },
-        animate: { opacity: 1, y: 0 }
+        animate: { opacity: 1, y: 0 },
       }}
       className="p-8 rounded-2xl bg-card/30 border border-white/5 hover:bg-card/50 hover:border-primary/20 transition-all duration-300 group"
     >
@@ -347,14 +670,12 @@ function FeatureCard({ icon, title, description }: { icon: React.ReactNode, titl
         {icon}
       </div>
       <h3 className="text-xl font-bold mb-3 text-white">{title}</h3>
-      <p className="text-gray-400 leading-relaxed">
-        {description}
-      </p>
+      <p className="text-gray-400 leading-relaxed">{description}</p>
     </motion.div>
   );
 }
 
-function StepCard({ number, icon, title, description }: { number: string, icon: React.ReactNode, title: string, description: string }) {
+function StepCard({ number, icon, title, description }: { number: string; icon: React.ReactNode; title: string; description: string }) {
   return (
     <div className="relative p-6 flex flex-col items-center text-center group">
       <div className="absolute top-0 left-1/2 -translate-x-1/2 text-9xl font-bold text-white/5 select-none -z-10 group-hover:text-primary/5 transition-colors duration-500">
@@ -364,34 +685,34 @@ function StepCard({ number, icon, title, description }: { number: string, icon: 
         {icon}
       </div>
       <h3 className="text-xl font-bold mb-3">{title}</h3>
-      <p className="text-gray-400">
-        {description}
-      </p>
+      <p className="text-gray-400">{description}</p>
     </div>
   );
 }
 
-function PricingCard({ 
-  title, 
-  price, 
-  period = "", 
-  description, 
-  features, 
-  ctaText, 
+function PricingCard({
+  title,
+  price,
+  period = '',
+  description,
+  features,
+  ctaText,
   ctaLink,
-  isPopular = false 
-}: { 
-  title: string, 
-  price: string, 
-  period?: string, 
-  description: string, 
-  features: string[], 
-  ctaText: string, 
-  ctaLink: string,
-  isPopular?: boolean 
+  isPopular = false,
+}: {
+  title: string;
+  price: string;
+  period?: string;
+  description: string;
+  features: string[];
+  ctaText: string;
+  ctaLink: string;
+  isPopular?: boolean;
 }) {
   return (
-    <div className={`relative p-8 rounded-2xl border ${isPopular ? 'border-primary bg-card/40 shadow-[0_0_50px_rgba(249,115,22,0.15)]' : 'border-white/5 bg-card/20'} flex flex-col`}>
+    <div
+      className={`relative p-8 rounded-2xl border ${isPopular ? 'border-primary bg-card/40 shadow-[0_0_50px_rgba(249,115,22,0.15)]' : 'border-white/5 bg-card/20'} flex flex-col`}
+    >
       {isPopular && (
         <div className="absolute -top-4 left-1/2 -translate-x-1/2 px-4 py-1 bg-primary text-white text-xs font-bold uppercase tracking-wider rounded-full">
           Most Popular
@@ -416,9 +737,9 @@ function PricingCard({
         </ul>
       </div>
       <Link href={ctaLink} className="block">
-        <Button 
-          variant={isPopular ? "glow" : "outline"} 
-          className={`w-full ${!isPopular && "border-white/10 hover:bg-white/5 hover:text-white"}`}
+        <Button
+          variant={isPopular ? 'glow' : 'outline'}
+          className={`w-full ${!isPopular && 'border-white/10 hover:bg-white/5 hover:text-white'}`}
         >
           {ctaText}
         </Button>

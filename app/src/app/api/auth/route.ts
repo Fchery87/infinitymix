@@ -31,6 +31,12 @@ export async function POST(request: NextRequest) {
     if (action === 'login') {
       return await handleLogin(body, request);
     }
+    if (action === 'forgot-password') {
+      return await handleForgotPassword(body, request);
+    }
+    if (action === 'reset-password') {
+      return await handleResetPassword(body, request);
+    }
 
     throw new ValidationError('Invalid action');
   } catch (error) {
@@ -135,4 +141,44 @@ async function handleLogin(body: unknown, request: NextRequest) {
   }
 
   return NextResponse.json(response);
+}
+
+async function handleForgotPassword(body: unknown, request: NextRequest) {
+  const { email } = body as { email: string };
+  
+  if (!email) {
+    throw new ValidationError('Email is required');
+  }
+
+  try {
+    const response = await auth.api.requestPasswordReset({
+      body: { email },
+      headers: request.headers,
+    });
+
+    return NextResponse.json({ message: 'Password reset email sent' });
+  } catch (error) {
+    console.error('Password reset request failed:', error);
+    return NextResponse.json({ message: 'Password reset email sent' });
+  }
+}
+
+async function handleResetPassword(body: unknown, request: NextRequest) {
+  const { token, password } = body as { token: string; password: string };
+  
+  if (!token || !password) {
+    throw new ValidationError('Token and password are required');
+  }
+
+  try {
+    await auth.api.resetPassword({
+      body: { newPassword: password, token },
+      headers: request.headers,
+    });
+
+    return NextResponse.json({ message: 'Password reset successful' });
+  } catch (error) {
+    console.error('Password reset failed:', error);
+    throw new AuthenticationError('Failed to reset password');
+  }
 }

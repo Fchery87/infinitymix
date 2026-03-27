@@ -7,3 +7,4 @@ export { ConfirmDialog } from './confirm-dialog';
 export { Skeleton, CardSkeleton, TrackSkeleton } from './skeleton';
 export { ToastContainer } from './toast';
 export { Tooltip } from './tooltip';
+export { ShortcutFeedback } from './shortcut-feedback';

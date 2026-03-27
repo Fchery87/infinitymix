@@ -3,14 +3,23 @@ import { z } from 'zod';
 // Auth schemas
 export const registerSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters').max(100, 'Name must be less than 100 characters'),
+  username: z.string()
+    .min(3, 'Username must be at least 3 characters')
+    .max(20, 'Username must be less than 20 characters')
+    .regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores'),
   email: z.string().email('Invalid email address'),
-  password: z.string().min(8, 'Password must be at least 8 characters').max(64, 'Password must be less than 64 characters'),
-  username: z.string().min(3, 'Username must be at least 3 characters').max(50, 'Username must be less than 50 characters').optional(),
+  password: z.string()
+    .min(8, 'Password must be at least 8 characters')
+    .max(64, 'Password must be less than 64 characters')
+    .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
+    .regex(/[0-9]/, 'Password must contain at least one number'),
+  termsAccepted: z.boolean().refine((v) => v === true, 'You must accept the terms and conditions'),
 });
 
 export const loginSchema = z.object({
   email: z.string().email('Invalid email address'),
   password: z.string().min(1, 'Password is required'),
+  rememberMe: z.boolean().optional(),
 });
 
 // Audio file schemas

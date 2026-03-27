@@ -19,7 +19,7 @@ export type AnalysisResourceStatus = 'pending' | 'analyzing' | 'completed' | 'fa
 export type StemResourceStatus = 'pending' | 'processing' | 'completed' | 'failed';
 export type MashupResourceStatus = 'pending' | 'generating' | 'completed' | 'failed';
 
-export type QueueDriver = 'in-memory' | 'worker-thread' | 'durable';
+export type QueueDriver = 'in-memory' | 'worker-thread' | 'durable' | 'bullmq';
 
 export type AutomationJobOwner = {
   runtime: RuntimeAuthority;

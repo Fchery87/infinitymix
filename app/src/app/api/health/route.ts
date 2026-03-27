@@ -1,9 +1,7 @@
-// Production health check endpoint
-// Returns system status for monitoring and load balancers
-
 import { NextResponse } from 'next/server';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
+import { checkRedisHealth } from '@/lib/queue/redis';
 
 export async function GET() {
   const startTime = Date.now();
@@ -20,11 +18,8 @@ export async function GET() {
     // Database health check
     if (process.env.DATABASE_URL) {
       try {
-        const connectionString = process.env.DATABASE_URL;
-        const client = postgres(connectionString, { max: 1 });
+        const client = postgres(process.env.DATABASE_URL, { max: 1 });
         drizzle(client);
-        
-        // Simple database ping
         await client`SELECT 1`;
         status.checks.database = {
           status: 'healthy',
@@ -39,10 +34,18 @@ export async function GET() {
         status.status = 'degraded';
       }
     } else {
-      status.checks.database = {
-        status: 'not_configured',
-        message: 'DATABASE_URL not set',
-      };
+      status.checks.database = { status: 'not_configured' };
+    }
+
+    // Redis health check
+    if (process.env.REDIS_URL) {
+      const redisHealth = await checkRedisHealth();
+      status.checks.redis = redisHealth;
+      if (redisHealth.status === 'down') {
+        status.status = 'degraded';
+      }
+    } else {
+      status.checks.redis = { status: 'not_configured', message: 'Using DB-backed queue' };
     }
 
     // Storage health check
@@ -51,11 +54,9 @@ export async function GET() {
       const storageHealthy = await MockStorage.testConnection();
       status.checks.storage = {
         status: storageHealthy ? 'healthy' : 'unhealthy',
-        type: process.env.AWS_ACCESS_KEY_ID ? 'AWS S3' : 'Mock Storage',
+        type: process.env.AWS_ACCESS_KEY_ID ? 'R2/S3' : 'Mock Storage',
       };
-      if (!storageHealthy) {
-        status.status = 'degraded';
-      }
+      if (!storageHealthy) status.status = 'degraded';
     } catch (error) {
       status.checks.storage = {
         status: 'unhealthy',
@@ -64,39 +65,47 @@ export async function GET() {
       status.status = 'degraded';
     }
 
+    // FFmpeg health check
+    try {
+      const { execSync } = await import('child_process');
+      execSync('ffmpeg -version', { timeout: 5000 });
+      status.checks.ffmpeg = { status: 'healthy' };
+    } catch {
+      status.checks.ffmpeg = { status: 'unhealthy', error: 'FFmpeg not found' };
+      status.status = 'degraded';
+    }
+
     // Memory check
     const memUsage = process.memoryUsage();
     status.checks.memory = {
       status: 'healthy',
-      rss: Math.round(memUsage.rss / 1024 / 1024), // MB
-      heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024), // MB
-      heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024), // MB
+      rss: Math.round(memUsage.rss / 1024 / 1024),
+      heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024),
+      heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024),
     };
 
-    // Response time
     const responseTime = Date.now() - startTime;
     status.checks.responseTime = {
       status: responseTime < 1000 ? 'healthy' : 'slow',
       ms: responseTime,
     };
 
-    // HTTP status code based on overall health
     const statusCode = status.status === 'healthy' ? 200 : 503;
 
-    return NextResponse.json(status, { 
+    return NextResponse.json(status, {
       status: statusCode,
       headers: {
         'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0',
       },
     });
-
   } catch (error) {
-    return NextResponse.json({
-      status: 'unhealthy',
-      timestamp: new Date().toISOString(),
-      error: error instanceof Error ? error.message : 'Unknown error',
-    }, { status: 500 });
+    return NextResponse.json(
+      {
+        status: 'unhealthy',
+        timestamp: new Date().toISOString(),
+        error: error instanceof Error ? error.message : 'Unknown error',
+      },
+      { status: 500 }
+    );
   }
 }

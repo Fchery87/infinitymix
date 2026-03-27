@@ -1,13 +1,17 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Zap, Mic2, Music2, ArrowRight } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { Zap, Mic2, Music2, ArrowRight, GripVertical, RotateCcw } from 'lucide-react';
+import { motion, Reorder } from 'framer-motion';
 import { Navigation } from '@/components/navigation';
 import { FileUpload } from '@/components/file-upload';
 import { TrackList, Track } from '@/components/track-list';
+import { useAuth } from '@/lib/auth/auth-context';
+import { useIsMobile } from '@/hooks/use-media-query';
+import { MobileCreateWizard } from '@/components/create/mobile-create-wizard';
 import { DurationPicker, DurationPreset } from '@/components/duration-picker';
 import { overallCompatibility, camelotCompatible } from '@/lib/utils/audio-compat';
 import { ProjectSelector } from '@/components/projects/project-selector';
@@ -108,10 +112,35 @@ type MashupStatusResponse = {
 };
 
 const GENERATION_POLL_INTERVAL_MS = 3000;
+const DRAFT_STORAGE_KEY = 'infinitymix-create-draft';
+const DRAFT_AUTOSAVE_DELAY_MS = 1500;
+
+type DraftState = {
+  selectedTrackIds: string[];
+  durationPreset: DurationPreset;
+  customDurationSeconds: number | null;
+  mixMode: MixMode;
+  selectedProjectId: string | null;
+  crossfadeEnabled: boolean;
+  crossfadeStyle: TransitionStyle;
+  crossfadeDuration: number;
+  autoDjTransitionStyle: TransitionStyle;
+  eventType: EventArchetype;
+  energyLevel: number;
+  isExpertMode: boolean;
+  preferStems: boolean;
+  keepOrder: boolean;
+  autoKeyMatch: boolean;
+  beatAlign: boolean;
+  beatAlignMode: 'downbeat' | 'any';
+  savedAt: number;
+};
 
 export default function CreatePage() {
+  const router = useRouter();
   const audioFeatureFlags = getPublicAudioPipelineFeatureFlags();
-  const [isAuthenticated] = useState(true); // Auto-logged in for development
+  const { isAuthenticated, isLoading: isAuthLoading } = useAuth();
+  const [isFirstTime, setIsFirstTime] = useState<boolean | null>(null);
   const [uploadedTracks, setUploadedTracks] = useState<Track[]>([]);
   const [isAdminUser, setIsAdminUser] = useState(false);
   const [trackAnalysisFilter, setTrackAnalysisFilter] = useState<TrackAnalysisFilter>('all');
@@ -135,7 +164,7 @@ export default function CreatePage() {
   const [stylePacks, setStylePacks] = useState<StylePackOption[]>([]);
   const [selectedStylePackId, setSelectedStylePackId] = useState<string | null>(null);
   const [audioPipelineConfig, setAudioPipelineConfig] = useState<PublicPipelineConfig | null>(null);
-  const stemMashupAvailable = false;
+  const stemMashupAvailable = process.env.NEXT_PUBLIC_FEATURE_STEM_MASHUP === 'true';
   
   // Project-related state
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
@@ -164,6 +193,145 @@ export default function CreatePage() {
   const [browserPreviewTrackBId, setBrowserPreviewTrackBId] = useState<string | null>(null);
   const browserPreviewGraphRef = useRef<PreviewGraph | null>(null);
   const browserPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Waveform click-to-seek preview
+  const [waveformPreview, setWaveformPreview] = useState<{ trackId: string; trackName: string; startSeconds: number; url: string | null; loading: boolean } | null>(null);
+  const waveformPreviewAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Mobile detection
+  const isMobile = useIsMobile();
+
+  // Auto-save draft
+  const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [draftRestored, setDraftRestored] = useState(false);
+  const isInitialLoadRef = useRef(true);
+
+  // Check onboarding status for first-time users
+  useEffect(() => {
+    if (!isAuthenticated || isAuthLoading) return;
+    
+    const onboardingKey = 'infinitymix_onboarding_complete';
+    const hasCompletedOnboarding = localStorage.getItem(onboardingKey) === 'true';
+    if (hasCompletedOnboarding) {
+      setIsFirstTime(false);
+      return;
+    }
+
+    // Check if user has any content
+    fetch('/api/onboarding/status', { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.isFirstTime === true) {
+          router.push('/onboarding');
+        } else {
+          localStorage.setItem(onboardingKey, 'true');
+          setIsFirstTime(false);
+        }
+      })
+      .catch(() => {
+        setIsFirstTime(false);
+      });
+  }, [isAuthenticated, isAuthLoading, router]);
+
+  // Restore draft from localStorage on mount
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
+      if (!raw) return;
+      const draft = JSON.parse(raw) as DraftState;
+      if (draft.savedAt && Date.now() - draft.savedAt < 24 * 60 * 60 * 1000) {
+        if (draft.durationPreset) setDurationPreset(draft.durationPreset);
+        if (draft.customDurationSeconds != null) setCustomDurationSeconds(draft.customDurationSeconds);
+        if (draft.mixMode) setMixMode(draft.mixMode);
+        if (draft.crossfadeEnabled != null) setCrossfadeEnabled(draft.crossfadeEnabled);
+        if (draft.crossfadeStyle) setCrossfadeStyle(draft.crossfadeStyle);
+        if (draft.crossfadeDuration != null) setCrossfadeDuration(draft.crossfadeDuration);
+        if (draft.autoDjTransitionStyle) setAutoDjTransitionStyle(draft.autoDjTransitionStyle);
+        if (draft.eventType) setEventType(draft.eventType);
+        if (draft.energyLevel != null) setEnergyLevel(draft.energyLevel);
+        if (draft.isExpertMode != null) setIsExpertMode(draft.isExpertMode);
+        if (draft.preferStems != null) setPreferStems(draft.preferStems);
+        if (draft.keepOrder != null) setKeepOrder(draft.keepOrder);
+        if (draft.autoKeyMatch != null) setAutoKeyMatch(draft.autoKeyMatch);
+        if (draft.beatAlign != null) setBeatAlign(draft.beatAlign);
+        if (draft.beatAlignMode) setBeatAlignMode(draft.beatAlignMode);
+        if (draft.selectedProjectId) setSelectedProjectId(draft.selectedProjectId);
+        // selectedTrackIds are restored after tracks load, store in a ref
+        if (draft.selectedTrackIds?.length) {
+          setDraftRestored(true);
+          setTimeout(() => setDraftRestored(false), 4000);
+        }
+        // We'll set selectedTrackIds after tracks finish loading
+        const restoreSelectedIds = () => {
+          if (draft.selectedTrackIds?.length) {
+            setSelectedTrackIds(draft.selectedTrackIds);
+          }
+        };
+        // Run after next tick so uploadedTracks is populated
+        requestAnimationFrame(restoreSelectedIds);
+      }
+    } catch {
+      // Corrupt draft, ignore
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+    }
+    // Mark initial load done after one microtask
+    queueMicrotask(() => { isInitialLoadRef.current = false; });
+  }, []);
+
+  // Auto-save draft whenever relevant state changes
+  useEffect(() => {
+    if (isInitialLoadRef.current) return;
+    if (draftSaveTimerRef.current) {
+      clearTimeout(draftSaveTimerRef.current);
+    }
+    draftSaveTimerRef.current = setTimeout(() => {
+      const draft: DraftState = {
+        selectedTrackIds,
+        durationPreset,
+        customDurationSeconds,
+        mixMode,
+        selectedProjectId,
+        crossfadeEnabled,
+        crossfadeStyle,
+        crossfadeDuration,
+        autoDjTransitionStyle,
+        eventType,
+        energyLevel,
+        isExpertMode,
+        preferStems,
+        keepOrder,
+        autoKeyMatch,
+        beatAlign,
+        beatAlignMode,
+        savedAt: Date.now(),
+      };
+      try {
+        localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+      } catch {
+        // Storage full or unavailable
+      }
+    }, DRAFT_AUTOSAVE_DELAY_MS);
+
+    return () => {
+      if (draftSaveTimerRef.current) {
+        clearTimeout(draftSaveTimerRef.current);
+      }
+    };
+  }, [
+    selectedTrackIds, durationPreset, customDurationSeconds, mixMode,
+    selectedProjectId, crossfadeEnabled, crossfadeStyle, crossfadeDuration,
+    autoDjTransitionStyle, eventType, energyLevel, isExpertMode,
+    preferStems, keepOrder, autoKeyMatch, beatAlign, beatAlignMode,
+  ]);
+
+  const clearDraft = useCallback(() => {
+    try {
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const scoreStyles = (score: number) => {
     if (score >= 0.8) return 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300';
@@ -303,6 +471,10 @@ export default function CreatePage() {
       }
       browserPreviewGraphRef.current?.dispose();
       browserPreviewGraphRef.current = null;
+      if (waveformPreviewAudioRef.current) {
+        waveformPreviewAudioRef.current.pause();
+        waveformPreviewAudioRef.current = null;
+      }
     };
   }, []);
 
@@ -652,6 +824,7 @@ export default function CreatePage() {
       }
 
       setGenerationMessage('Mashup request accepted. Queueing generation...');
+      clearDraft();
       setActiveGeneration({
         mashupId: data.id,
         automationJobId: data.automation_job_id ?? null,
@@ -712,6 +885,7 @@ export default function CreatePage() {
       }
 
       setGenerationMessage('Stem mashup request accepted. Preparing render...');
+      clearDraft();
       setActiveGeneration({
         mashupId: data.id,
         label: 'Stem mashup',
@@ -769,6 +943,7 @@ export default function CreatePage() {
       }
 
       setGenerationMessage('Auto DJ mix request accepted. Preparing render...');
+      clearDraft();
       setActiveGeneration({
         mashupId: data.id,
         automationJobId: data.automation_job_id ?? null,
@@ -1020,10 +1195,70 @@ export default function CreatePage() {
     }
   };
 
+  const handleWaveformClick = useCallback((trackId: string, fraction: number) => {
+    const track = completedTracks.find(t => t.id === trackId);
+    if (!track) return;
+
+    const durationStr = (track as any).duration_seconds;
+    const duration = durationStr ? parseFloat(durationStr) : 180;
+    const startSeconds = Math.round(fraction * duration);
+
+    // Stop any existing preview
+    if (waveformPreviewAudioRef.current) {
+      waveformPreviewAudioRef.current.pause();
+      waveformPreviewAudioRef.current = null;
+    }
+
+    setWaveformPreview({
+      trackId,
+      trackName: track.original_filename,
+      startSeconds,
+      url: `/api/audio/stream/track/${trackId}?start=${startSeconds}`,
+      loading: true,
+    });
+  }, [completedTracks]);
+
+  const handleWaveformPreviewPlay = useCallback(() => {
+    if (!waveformPreview?.url) return;
+    if (waveformPreviewAudioRef.current) {
+      waveformPreviewAudioRef.current.pause();
+    }
+    const audio = new Audio(waveformPreview.url);
+    waveformPreviewAudioRef.current = audio;
+    audio.play().catch(() => {});
+    audio.addEventListener('loadeddata', () => {
+      setWaveformPreview(prev => prev ? { ...prev, loading: false } : null);
+    }, { once: true });
+  }, [waveformPreview]);
+
+  const handleWaveformPreviewStop = useCallback(() => {
+    if (waveformPreviewAudioRef.current) {
+      waveformPreviewAudioRef.current.pause();
+      waveformPreviewAudioRef.current = null;
+    }
+    setWaveformPreview(null);
+  }, []);
+
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full" />
+      </div>
+    );
+  }
+
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <p>Redirecting to login...</p>
+      </div>
+    );
+  }
+
+  if (isFirstTime === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin w-8 h-8 border-2 border-primary border-t-transparent rounded-full" />
       </div>
     );
   }
@@ -1033,7 +1268,50 @@ export default function CreatePage() {
       {/* Navbar */}
       <Navigation />
 
-      {/* Main Content */}
+      {/* Mobile Create Wizard */}
+      {isMobile ? (
+        <main className="pt-28 pb-16 px-4 max-w-lg mx-auto">
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4 }}
+            className="text-center mb-6"
+          >
+            <h2 className="text-2xl font-extrabold tracking-tight mb-1">
+              Create <span className="text-primary">Mashup</span>
+            </h2>
+          </motion.div>
+          <MobileCreateWizard
+            isUploading={isUploading}
+            onFileUpload={handleFileUpload}
+            uploadedTracks={uploadedTracks}
+            completedTracks={completedTracks}
+            selectedTrackIds={selectedTrackIds}
+            onToggleTrack={(trackId) => {
+              setSelectedTrackIds((current) => {
+                if (current.includes(trackId)) return current.filter((id) => id !== trackId);
+                return [...new Set([...current, trackId])];
+              });
+            }}
+            mixMode={mixMode}
+            onMixModeChange={setMixMode}
+            transitionStyles={transitionStyles}
+            selectedTransitionStyle={autoDjTransitionStyle}
+            onTransitionStyleChange={(style) => setAutoDjTransitionStyle(style)}
+            stemMashupAvailable={stemMashupAvailable}
+            isGenerating={isGenerating}
+            generationMessage={generationMessage}
+            onGenerate={
+              mixMode === 'standard'
+                ? handleGenerateMashup
+                : mixMode === 'stem_mashup'
+                  ? handleGenerateStemMashup
+                  : handleGenerateAutoDjMix
+            }
+            draftRestored={draftRestored}
+          />
+        </main>
+      ) : (
       <main className="pt-32 pb-16 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto">
         
         <motion.div 
@@ -1674,6 +1952,69 @@ export default function CreatePage() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Draft restored notification */}
+            {draftRestored && (
+              <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-200">
+                <RotateCcw className="w-4 h-4 flex-shrink-0" />
+                <span>Draft restored from your last session.</span>
+              </div>
+            )}
+
+            {/* Drag-to-reorder selected tracks */}
+            {selectedTrackIds.length > 1 && (() => {
+              const orderedSelectedTracks = selectedTrackIds
+                .map(id => completedTracks.find(t => t.id === id))
+                .filter((t): t is NonNullable<typeof t> => Boolean(t));
+
+              if (orderedSelectedTracks.length < 2) return null;
+
+              return (
+                <Card className="bg-card/60 backdrop-blur-xl border-white/10">
+                  <CardContent className="pt-6 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-gray-400">Mix order</p>
+                      <span className="text-xs text-gray-500">{orderedSelectedTracks.length} tracks</span>
+                    </div>
+                    <p className="text-[11px] text-gray-500">Drag to reorder playback sequence</p>
+                    <Reorder.Group
+                      axis="y"
+                      values={selectedTrackIds}
+                      onReorder={setSelectedTrackIds}
+                      className="space-y-1.5"
+                    >
+                      {selectedTrackIds
+                        .filter(id => completedTracks.some(t => t.id === id))
+                        .map((id) => {
+                          const track = completedTracks.find(t => t.id === id);
+                          if (!track) return null;
+                          return (
+                            <Reorder.Item
+                              key={id}
+                              value={id}
+                              className="flex items-center gap-3 rounded-lg bg-black/30 border border-white/5 px-3 py-2 cursor-grab active:cursor-grabbing select-none group"
+                            >
+                              <GripVertical className="w-4 h-4 text-gray-600 group-hover:text-gray-400 flex-shrink-0" />
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm text-white truncate">{track.original_filename}</p>
+                                <p className="text-[11px] text-gray-500">
+                                  {track.bpm ? `${track.bpm} BPM` : ''}
+                                  {track.bpm && track.musical_key ? ' \u2022 ' : ''}
+                                  {track.musical_key ?? ''}
+                                </p>
+                              </div>
+                              <span className="text-[10px] text-gray-600 font-mono tabular-nums">
+                                {selectedTrackIds.indexOf(id) + 1}
+                              </span>
+                            </Reorder.Item>
+                          );
+                        })}
+                    </Reorder.Group>
+                  </CardContent>
+                </Card>
+              );
+            })()
+            }
             
             {/* Generation Action */}
             <Card className="bg-card/60 backdrop-blur-xl">
@@ -1713,19 +2054,28 @@ export default function CreatePage() {
                             className="w-full h-14 text-lg font-bold relative overflow-hidden group" 
                             variant="default"
                             onClick={handleGenerateStemMashup}
-                            disabled={true}
+                            disabled={isGenerating || !vocalTrackId || !instrumentalTrackId}
                         >
                             <div className="absolute inset-0 bg-gradient-to-r from-pink-500 via-primary to-orange-500 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                             <span className="relative z-10 flex items-center justify-center">
-                            <>
-                            <Mic2 className="w-5 h-5 mr-2" />
-                            Stem Mashup Unavailable
-                            </>
+                            {isGenerating ? (
+                                <>
+                                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-3" />
+                                Processing...
+                                </>
+                            ) : (
+                                <>
+                                <Mic2 className="w-5 h-5 mr-2" />
+                                Generate Stem Mashup
+                                </>
+                            )}
                             </span>
                         </Button>
-                        <p className="text-xs text-center mt-3 text-gray-500">
-                        * Disabled during Phase 0 runtime unification
-                        </p>
+                        {!vocalTrackId || !instrumentalTrackId ? (
+                            <p className="text-xs text-center mt-3 text-gray-500">
+                            * Select both a vocal and instrumental track above
+                            </p>
+                        ) : null}
                       </>
                     ) : (
                       <>
@@ -1813,10 +2163,47 @@ export default function CreatePage() {
             tracks={uploadedTracks} 
             onRemoveTrack={handleRemoveTrack}
             onStemsUpdated={loadTracks}
+            onWaveformClick={handleWaveformClick}
         />
-        
+
+        {/* Waveform click-to-seek preview */}
+        {waveformPreview && (
+          <Card className="mt-4 bg-card/80 backdrop-blur-xl border-primary/30">
+            <CardContent className="pt-4 pb-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-sm text-white truncate">{waveformPreview.trackName}</p>
+                  <p className="text-xs text-gray-400">
+                    Preview from {Math.floor(waveformPreview.startSeconds / 60)}:{String(waveformPreview.startSeconds % 60).padStart(2, '0')}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleWaveformPreviewPlay}
+                    className="h-8 px-3 text-xs text-primary border border-primary/20 hover:border-primary/40"
+                    disabled={waveformPreview.loading}
+                  >
+                    Play
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleWaveformPreviewStop}
+                    className="h-8 px-3 text-xs text-gray-400 border border-white/10 hover:border-white/20"
+                  >
+                    Dismiss
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
       </main>
-      
+      )}
+
       {/* Create Project Modal */}
       <CreateProjectModal
         isOpen={isProjectModalOpen}

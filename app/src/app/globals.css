@@ -1,42 +1,90 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-@layer base {
-  :root {
-    /* Deep Space / Professional Dark Theme */
-    --background: 240 10% 3.9%; /* Very dark gray/blue */
-    --foreground: 0 0% 98%;
+/* Tailwind v4 Theme Configuration (CSS-native) */
+@theme {
+  /* Colors */
+  --color-border: hsl(240 4% 16%);
+  --color-input: hsl(240 4% 16%);
+  --color-ring: hsl(24 95% 53%);
+  --color-background: hsl(240 10% 3.9%);
+  --color-foreground: hsl(0 0% 98%);
+  --color-primary: hsl(24 95% 53%);
+  --color-primary-foreground: hsl(144.9 80.4% 10%);
+  --color-secondary: hsl(240 4% 16%);
+  --color-secondary-foreground: hsl(0 0% 98%);
+  --color-destructive: hsl(0 63% 31%);
+  --color-destructive-foreground: hsl(0 0% 98%);
+  --color-muted: hsl(240 4% 16%);
+  --color-muted-foreground: hsl(240 5% 75%);
+  --color-accent: hsl(240 4% 16%);
+  --color-accent-foreground: hsl(0 0% 98%);
+  --color-popover: hsl(240 10% 3.9%);
+  --color-popover-foreground: hsl(0 0% 98%);
+  --color-card: hsl(240 10% 6%);
+  --color-card-foreground: hsl(0 0% 98%);
 
-    --card: 240 10% 6%; /* Slightly lighter than background */
-    --card-foreground: 0 0% 98%;
+  /* Border Radius */
+  --radius-lg: 0.75rem;
+  --radius-md: calc(0.75rem - 2px);
+  --radius-sm: calc(0.75rem - 4px);
 
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
+  /* Font Family */
+  --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
 
-    --primary: 24 95% 53%; /* Electric Orange #F97316 */
-    --primary-foreground: 144.9 80.4% 10%;
-
-    --secondary: 240 4% 16%;
-    --secondary-foreground: 0 0% 98%;
-
-    --muted: 240 4% 16%;
-    --muted-foreground: 240 5% 75%; /* Improved contrast from 65% */
-
-    --accent: 240 4% 16%;
-    --accent-foreground: 0 0% 98%;
-
-    --destructive: 0 63% 31%;
-    --destructive-foreground: 0 0% 98%;
-
-    --border: 240 4% 16%;
-    --input: 240 4% 16%;
-    --ring: 24 95% 53%; /* Match primary */
-
-    --radius: 0.75rem;
-  }
+  /* Animations */
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+  --animate-fade-in: fade-in 0.5s ease-out;
+  --animate-fade-up: fade-up 0.5s ease-out;
+  --animate-fade-down: fade-down 0.5s ease-out;
+  --animate-slide-up: slide-up 0.5s ease-out;
+  --animate-slide-in-right: slide-in-right 0.3s ease-out;
+  --animate-pulse-glow: pulse-glow 2s infinite;
 }
 
+/* Keyframes */
+@keyframes accordion-down {
+  from { height: 0; }
+  to { height: var(--radix-accordion-content-height); }
+}
+
+@keyframes accordion-up {
+  from { height: var(--radix-accordion-content-height); }
+  to { height: 0; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-down {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 5px hsl(24 95% 53% / 0.5); }
+  50% { box-shadow: 0 0 20px hsl(24 95% 53% / 0.5); }
+}
+
+/* Base Styles */
 @layer base {
   * {
     @apply border-border;
@@ -135,27 +183,8 @@
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background;
   }
   
-  /* Animation utilities */
-  .animate-fade-in {
-    animation: fade-in var(--duration-normal) ease-out;
-  }
-  
-  .animate-slide-up {
-    animation: slide-up var(--duration-slow) ease-out;
-  }
-  
   /* Glassmorphism utilities */
   .glass-strong {
     @apply bg-black/40 backdrop-blur-xl border-white/10;
   }
-}
-
-@keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes slide-up {
-  from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: translateY(0); }
 }

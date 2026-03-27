@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Zap, Menu, X, FolderKanban, Music, User, LogOut, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils/helpers';
+import { NotificationBell } from '@/components/notifications/NotificationBell';
 
 interface NavItem {
   label: string;
@@ -80,6 +81,9 @@ export function Navigation() {
               );
             })}
             
+            {/* Notification Bell */}
+            <NotificationBell />
+            
             {/* Sign Out Button */}
             <Link href="/login">
               <Button
@@ -137,7 +141,10 @@ export function Navigation() {
               );
             })}
             
-            <div className="pt-4 border-t border-white/10 mt-4">
+            <div className="pt-4 border-t border-white/10 mt-4 flex flex-col gap-1">
+              <div className="px-4 py-2">
+                <NotificationBell />
+              </div>
               <Link
                 href="/login"
                 onClick={() => setIsMobileMenuOpen(false)}

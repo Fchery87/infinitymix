@@ -16,6 +16,7 @@ const projectUpdateSchema = z.object({
     .optional(),
   bpmLock: z.number().positive().optional().or(z.null()),
   keyLock: z.string().max(20).optional().or(z.null()),
+  isPinned: z.boolean().optional(),
 });
 
 // GET /api/projects/[id] - Get a single project
@@ -94,6 +95,8 @@ export async function PATCH(
       updateData.bpmLock = validatedData.bpmLock?.toString() || null;
     if (validatedData.keyLock !== undefined)
       updateData.keyLock = validatedData.keyLock;
+    if (validatedData.isPinned !== undefined)
+      updateData.isPinned = validatedData.isPinned;
 
     const [updatedProject] = await db
       .update(projects)
